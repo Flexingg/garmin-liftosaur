@@ -1,0 +1,31 @@
+# Python
+backend/python/.venv/
+__pycache__/
+*.pyc
+
+# Garmin / Connect IQ build output
+embedded/monkeyc/bin/
+*.prg
+*.iq
+developer_key.p12
+
+# Flutter / Dart
+mobile/flutter/build/
+mobile/flutter/.dart_tool/
+mobile/flutter/.flutter-plugins
+mobile/flutter/.flutter-plugins-dependencies
+mobile/flutter/.metadata
+mobile/flutter/.packages
+mobile/flutter/pubspec.lock
+mobile/flutter/android/local.properties
+mobile/flutter/android/app/debug/
+mobile/flutter/android/app/profile/
+mobile/flutter/android/app/release/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit
+*.env
+.env

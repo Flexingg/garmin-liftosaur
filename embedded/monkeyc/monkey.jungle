@@ -1,0 +1,7 @@
+# Connect IQ build configuration for the Liftosaur watch app.
+# Build:  monkeyc -d venu2 -f monkey.jungle -o bin/Liftosaur.prg -y <developer_key.p12> -w
+
+manifest = manifest.xml
+
+source.relativePath = source
+source.searchPath = source
