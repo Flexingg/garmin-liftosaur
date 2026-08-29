@@ -1,7 +1,12 @@
 # Connect IQ build configuration for the Liftosaur watch app.
-# Build:  monkeyc -d venu2 -f monkey.jungle -o bin/Liftosaur.prg -y <developer_key.p12> -w
+# Build:  monkeyc -d venu2 -f monkey.jungle -o bin/Liftosaur.prg -y developer_key.der
+#
+# typecheck levels: 0=off, 1=gradual, 2=informative, 3=strict.
+# SDK samples build with the default (gradual); strict flags enums/constants
+# that are otherwise valid, so we stay at gradual for the watch app.
 
-manifest = manifest.xml
-
-source.relativePath = source
-source.searchPath = source
+project.manifest = manifest.xml
+typecheck = 1
+optimization = 0
+sourcePath = source
+resourcePath = resources

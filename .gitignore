@@ -7,7 +7,11 @@ __pycache__/
 embedded/monkeyc/bin/
 *.prg
 *.iq
-developer_key.p12
+
+# Developer signing keys — NEVER commit
+embedded/monkeyc/developer_key.*
+embedded/monkeyc/devkey.pem
+*.pass
 
 # Flutter / Dart
 mobile/flutter/build/

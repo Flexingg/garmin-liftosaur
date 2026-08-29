@@ -1,23 +1,21 @@
 // Liftosaur — ring buffer for accelerometer samples + console logging.
 // Owner: Embedded Agent.
 //
-// Compact sample store for HW checkpoint 1 (prove 100Hz-ish data flows without
-// crashing the watch). Values are Toybox.SensorData.accel arrays: [x,y,z] in
-// m/s^2 per Garmin docs. NOTE: verify at checkpoint 1 that a still wrist reads
-// |Z| ~ 9.81 (not ~1.0) — if it's ~1.0 the raw units are g and we rescale.
-//
-// A ring buffer caps memory regardless of set length (drift of long sets).
+// Stores Toybox.Sensor.getInfo().accel samples ([x,y,z] Array<Float>). A ring
+// buffer caps memory regardless of set length. Identical consecutive reads are
+// de-duplicated so the reported rate reflects the TRUE sensor rate, not the
+// poll rate. Units: Garmin reports accel in m/s^2 (verify |Z| ~ 9.81 at rest;
+// if ~1.0 the units are g and we rescale in the physics phase).
 
-using Toybox.System as Sys;
-using Toybox.Sensor as Sensor;
-using Toybox.Lang as Lang;
+import Toybox.Lang;
+import Toybox.System;
 
 class SampleBuffer {
 
-    hidden var _cap;    // max buffered samples
-    hidden var _count;  // samples currently in window
-    hidden var _total;  // cumulative samples across the whole set
-    hidden var _xs; hidden var _ys; hidden var _zs; hidden var _elapsedMs;
+    private var _cap;    // max buffered samples
+    private var _count;  // samples currently in window
+    private var _total;  // cumulative samples across the whole set
+    private var _xs; private var _ys; private var _zs; private var _elapsedMs;
 
     function initialize(cap as Number) {
         _cap  = cap;
@@ -28,13 +26,22 @@ class SampleBuffer {
 
     // Store one sample. elapsedMs is System.getTimer() minus the set start,
     // kept small (Number) to avoid Long/32-bit overflow.
-    function add(sensorData as Sensor.SensorData, startMs as Long) as Void {
-        var a = sensorData.accel;
-        if (a == null) { return; }
-        var now = Sys.getTimer() - startMs;  // small relative value
+    function add(accel as Array<Float>, startMs as Long) as Void {
+        if (accel == null) { return; }
+        var now = System.getTimer() - startMs;  // small relative value
+
+        // De-duplicate: identical consecutive reads are the cached sample
+        // returned by getInfo() between actual sensor updates.
+        if (_count > 0) {
+            if (_xs[_count-1] == accel[0] && _ys[_count-1] == accel[1] &&
+                _zs[_count-1] == accel[2]) {
+                return;
+            }
+        }
+
         if (_count == _cap) { shift(); }
         var i = _count;
-        _xs[i] = a[0]; _ys[i] = a[1]; _zs[i] = a[2]; _elapsedMs[i] = now;
+        _xs[i] = accel[0]; _ys[i] = accel[1]; _zs[i] = accel[2]; _elapsedMs[i] = now;
         _count++;
         _total++;
     }
@@ -61,13 +68,13 @@ class SampleBuffer {
 
     // Console summary — the HW checkpoint 1 validation output.
     function logSummary() as Void {
-        Sys.println("samples total=" + _total + " window=" + _count +
+        System.println("samples total=" + _total + " window=" + _count +
                     " rateHz=" + rateHz().format("%.1f"));
         if (_count > 0) {
             var mid = (_count / 2).toNumber();
-            Sys.println("  first t=" + _elapsedMs[0] + " x=" + _xs[0].format("%.2f") +
+            System.println("  first t=" + _elapsedMs[0] + " x=" + _xs[0].format("%.2f") +
                         " y=" + _ys[0].format("%.2f") + " z=" + _zs[0].format("%.2f"));
-            Sys.println("  mid   t=" + _elapsedMs[mid] + " x=" + _xs[mid].format("%.2f") +
+            System.println("  mid   t=" + _elapsedMs[mid] + " x=" + _xs[mid].format("%.2f") +
                         " y=" + _ys[mid].format("%.2f") + " z=" + _zs[mid].format("%.2f"));
         }
     }

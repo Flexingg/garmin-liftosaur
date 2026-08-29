@@ -1,11 +1,12 @@
 // Liftosaur — input delegate. Hardware Start/Stop toggles recording.
 // Owner: Embedded Agent.
 
-using Toybox.WatchUi as Ui;
+import Toybox.Lang;
+import Toybox.WatchUi;
 
-class LiftDelegate extends Ui.BehaviorDelegate {
+class LiftDelegate extends WatchUi.BehaviorDelegate {
 
-    hidden var _controller;
+    private var _controller;
 
     function initialize(controller as RecordingController) {
         BehaviorDelegate.initialize();
@@ -13,7 +14,7 @@ class LiftDelegate extends Ui.BehaviorDelegate {
     }
 
     // Venu 2: the Start/Stop physical button fires onSelect.
-    function onSelect() {
+    function onSelect() as Boolean {
         _controller.onToggle();
         return true;
     }

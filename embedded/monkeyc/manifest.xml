@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="1">
   <iq:application id="B1E2F3A4-B5C6-4D7E-8F90-1234567890AB"
-                  type="watch-app" name="Liftosaur" entry="LiftosaurApp">
+                  name="@Strings.AppName" type="watch-app" entry="LiftosaurApp"
+                  launcherIcon="@Drawables.LauncherIcon">
     <iq:products>
       <iq:product id="venu2" />
     </iq:products>
     <iq:permissions>
-      <iq:uses-permission id="Activity" />
       <iq:uses-permission id="Sensor" />
-      <iq:uses-permission id="Communications" />
-      <iq:uses-permission id="BluetoothLowEnergy" />
-      <iq:uses-permission id="Background" />
+      <iq:uses-permission id="Fit" />
     </iq:permissions>
-    <iq:barrel entry="LiftosaurApp" name="app" />
+    <iq:languages>
+      <iq:language>eng</iq:language>
+    </iq:languages>
   </iq:application>
 </iq:manifest>
