@@ -11,12 +11,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-API_VERSION = "0.1.0"
+from app.physics import compute_physics
+
+API_VERSION = "0.2.0"
 
 app = FastAPI(title="Garmin_Liftosaur Backend", version=API_VERSION)
+
+LBS_TO_KG = 0.45359237
 
 
 class SetIngest(BaseModel):
@@ -54,13 +58,37 @@ def health() -> dict:
 
 @app.post("/api/v1/sets")
 def ingest_set(payload: SetIngest) -> dict:
-    """Accept a completed set. Physics + rep detection wired up in Phase 4/5."""
+    """Accept a completed set and run Phase 4 physics on the raw samples."""
     n = len(payload.samples)
+    if n < 4:
+        raise HTTPException(status_code=422, detail=f"need >=4 samples, got {n}")
+
+    mass_kg = payload.prescribed_weight_lbs * LBS_TO_KG
+    try:
+        phys = compute_physics(
+            raw_samples=payload.samples,
+            scale=payload.scale,
+            sample_rate_hz=payload.sample_rate_hz,
+            mass_kg=mass_kg,
+        )
+    except ValueError as exc:  # e.g. filter cutoff >= nyquist at a bad rate
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    warnings = list(phys.warnings)
+    if n < payload.sample_rate_hz * 2:
+        warnings.append("short_set")
+
     return {
         "set_id": "pending",
         "status": "ok",
         "n_samples": n,
-        "physics": None,  # Phase 4
+        "physics": {
+            "peak_velocity_m_s": round(phys.peak_velocity_m_s, 4),
+            "peak_power_w": round(phys.peak_power_w, 2),
+            "mean_power_w": round(phys.mean_power_w, 2),
+            "displacement_m": round(phys.displacement_m, 4),
+            "duration_s": round(phys.duration_s, 2),
+        },
         "rep_count": None,  # Phase 5
-        "warnings": ["phase4_pending"],
+        "warnings": warnings or None,
     }
