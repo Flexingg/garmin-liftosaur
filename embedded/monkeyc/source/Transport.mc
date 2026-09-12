@@ -54,6 +54,18 @@ class LiftTransport {
     function statusLine() as String {
         return "n/a";
     }
+
+    // Periodic link maintenance (reconnect/watchdog). Called from the sensor
+    // tick so it runs whether or not a set is recording.
+    function tick() as Void {
+    }
+
+    // Advertisements seen while scanning. 0 while "scan" means the watch is not
+    // seeing any BLE traffic at all; >0 but never connecting is the signature of
+    // "advertisements arrive, but none is ours".
+    function advertisersSeen() as Number {
+        return 0;
+    }
 }
 
 // Logs the frame. Used for HW checkpoint validation and as a fallback.
@@ -142,5 +154,16 @@ class LiftTeeTransport extends LiftTransport {
     function statusLine() as String {
         if (_parts.size() == 0) { return "none"; }
         return _parts[0].statusLine();
+    }
+
+    function tick() as Void {
+        for (var i = 0; i < _parts.size(); i++) {
+            _parts[i].tick();
+        }
+    }
+
+    function advertisersSeen() as Number {
+        if (_parts.size() == 0) { return 0; }
+        return _parts[0].advertisersSeen();
     }
 }

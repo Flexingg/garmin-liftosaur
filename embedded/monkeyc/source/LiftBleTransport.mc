@@ -19,13 +19,23 @@
 //
 // Data path: frame (dictionary, from LiftFrame) -> LiftBinary.encode ->
 //   fragment to maxPayload chunks -> requestWrite per fragment.
-// No response is required per fragment (WRITE_TYPE_DEFAULT) so streaming is not
-// throttled by round trips; fragments are ordered and the phone reassembles.
 //
-// STATUS: compiles and is wired into the app, but end-to-end BLE behaviour has
-// NOT been verified on hardware yet (that needs the phone app installed and
-// both devices in range). Treat the pairing UX and the fragment size as tuning
-// knobs to confirm with Hardware Checkpoint 2.
+// ---------------------------------------------------------------------------
+// TWO BUGS FIXED AFTER THE FIRST HARDWARE RUN (watch showed `ble:lost` + skips):
+//
+//  1. NO SCAN FILTER. It paired with *whatever advertiser appeared first* —
+//     any BLE device in range. Pairing with an unrelated device yields exactly
+//     "paired but never usable", and explains a stray 6-digit passkey prompt.
+//     Now it only pairs when the advertisement contains our service UUID or
+//     carries our local name.
+//  2. NO WATCHDOG. `pairDevice()` returning a device stopped scanning and then
+//     nothing connected, so the transport sat in `lost` forever while every
+//     frame was skipped. `tick()` now recovers: an unconnected pair attempt is
+//     abandoned (and unpaired) after PAIR_TIMEOUT_MS, and scanning resumes.
+//
+// STATUS: compiles, wired into the app, and the diagnostics are verified to
+// report truthfully on hardware. Successful streaming is still unproven — that
+// is Hardware Checkpoint 2.
 
 import Toybox.BluetoothLowEnergy;
 import Toybox.Lang;
@@ -34,6 +44,9 @@ import Toybox.System;
 // UUIDs of the PHONE's GATT server. Mirrored in the Dart client
 // (mobile/flutter/lib/ble_link.dart) and documented in docs/04-ble-transport.md.
 module LiftBle {
+    // Advertised local name, used as a secondary scan filter.
+    const LOCAL_NAME = "Liftosaur";
+
     function serviceUuid() as BluetoothLowEnergy.Uuid {
         return BluetoothLowEnergy.stringToUuid("4c494654-0001-4000-8000-00805f9b34fb");
     }
@@ -84,36 +97,48 @@ class LiftBleTransport extends LiftTransport {
     // practice; if writes start failing, lower this before anything else.
     private const MAX_FRAGMENT_PAYLOAD = 180;
 
+    // Give up on a pair attempt that never connects, then scan again.
+    private const PAIR_TIMEOUT_MS = 8000;
+    // If we are connected but can never resolve the characteristic, the peer is
+    // probably wrong (or its GATT server is not serving our profile): re-scan.
+    private const MAX_RESOLVE_TRIES = 40;
+
     private var _delegate;
-    private var _device;
+    private var _device;         // from onConnectedStateChanged
+    private var _pairedDevice;   // from pairDevice()
     private var _service;
-    private var _data;          // the characteristic we write to
+    private var _data;           // the characteristic we write to
     private var _scanning;
     private var _connected;
     private var _encrypted;
+    private var _started;
     private var _framesSent;
     private var _fragmentsSent;
     private var _writeFails;
+    private var _skipped;        // frames dropped because the link was not ready
+    private var _resolveTries;
+    private var _pairStartedMs;  // System.getTimer() at the last pairDevice
     private var _lastStatus;
-    private var _skipped;      // frames dropped because the link was not ready
-    private var _resolveTries; // characteristic resolution attempts
-    private var _started;      // start() has run
+    private var _sawAdvertisers;
 
     function initialize() {
         LiftTransport.initialize();
         _device = null;
+        _pairedDevice = null;
         _service = null;
         _data = null;
         _scanning = false;
         _connected = false;
         _encrypted = false;
+        _started = false;
         _framesSent = 0;
         _fragmentsSent = 0;
         _writeFails = 0;
-        _lastStatus = 0;
         _skipped = 0;
         _resolveTries = 0;
-        _started = false;
+        _pairStartedMs = 0;
+        _lastStatus = 0;
+        _sawAdvertisers = 0;
     }
 
     // Register the profile the phone will host, then start scanning for it.
@@ -144,9 +169,8 @@ class LiftBleTransport extends LiftTransport {
         });
 
         _started = true;
-        _scanning = true;
-        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
-        System.println("LiftBle: scanning for the phone's GATT server");
+        resumeScanning();
+        System.println("LiftBle: scanning for '" + LiftBle.LOCAL_NAME + "'");
     }
 
     function stop() as Void {
@@ -156,21 +180,23 @@ class LiftBleTransport extends LiftTransport {
     }
 
     function name() as String {
-        if (_connected) {
-            if (_data != null) { return "ble"; }
-            return "ble:svc?";      // connected but characteristic not resolved
-        }
-        if (_scanning) { return "ble:scan"; }
-        return "ble:idle";
+        return "ble:" + statusLine();
     }
 
     function framesSent() as Number { return _framesSent; }
     function writeFails() as Number { return _writeFails; }
     function skipped() as Number { return _skipped; }
     function fragmentsSent() as Number { return _fragmentsSent; }
+    function isConnected() as Boolean { return _connected; }
+    function isEncrypted() as Boolean { return _encrypted; }
+    function lastWriteStatus() as Number { return _lastStatus; }
+    function advertisersSeen() as Number { return _sawAdvertisers; }
+    function deviceName() as String {
+        return _device == null ? "" : _device.getName();
+    }
 
     // Compact on-screen state so the watch itself explains the link:
-    //   off | scan | paired | no-svc | no-char | ready | lost
+    //   off | scan | waiting | no-svc | no-char | ready
     function statusLine() as String {
         if (!_started) { return "off"; }
         if (_connected) {
@@ -178,25 +204,68 @@ class LiftBleTransport extends LiftTransport {
             if (_data == null) { return "no-char"; }
             return "ready";
         }
+        if (_pairStartedMs != 0) { return "waiting"; }  // paired, awaiting connect
         if (_scanning) { return "scan"; }
         return "lost";
     }
-    function isConnected() as Boolean { return _connected; }
-    function isEncrypted() as Boolean { return _encrypted; }
-    function lastWriteStatus() as Number { return _lastStatus; }
-    function deviceName() as String {
-        return _device == null ? "" : _device.getName();
+
+    // ------------------------------------------------------------ link upkeep
+
+    private function resumeScanning() as Void {
+        _scanning = true;
+        _pairStartedMs = 0;
+        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
+    }
+
+    // Called periodically by the controller (see LiftTransport.tick). Without
+    // this, a pair attempt that never connected left the transport in `lost`
+    // forever, skipping every frame.
+    function tick() as Void {
+        if (!_started || _connected) { return; }
+
+        // Abandon a stalled pair attempt so the watch is not wedged on a device
+        // that will never connect.
+        if (_pairStartedMs != 0) {
+            if ((System.getTimer() - _pairStartedMs) > PAIR_TIMEOUT_MS) {
+                System.println("LiftBle: pair timed out; unpairing and rescanning");
+                if (_pairedDevice != null) {
+                    BluetoothLowEnergy.unpairDevice(_pairedDevice);
+                    _pairedDevice = null;
+                }
+                _resolveTries = 0;
+                resumeScanning();
+            }
+            return;
+        }
+
+        // Connected but unusable for too long: the peer is not serving our
+        // profile. Drop it and look again rather than skipping every frame.
+        if (_resolveTries > MAX_RESOLVE_TRIES) {
+            System.println("LiftBle: characteristic never resolved; rescanning");
+            if (_device != null) {
+                BluetoothLowEnergy.unpairDevice(_device);
+            }
+            _device = null;
+            _connected = false;
+            _service = null;
+            _data = null;
+            _resolveTries = 0;
+            resumeScanning();
+            return;
+        }
+
+        if (!_scanning) { resumeScanning(); }
     }
 
     // ---------------------------------------------------------------- transport
 
     function emit(frame as Dictionary) as Void {
         if (!(Toybox has :BluetoothLowEnergy)) { return; }
-        if (_data == null) {
+        if (_data == null && _connected) {
             // Retry resolution: getService()/getCharacteristic() can return null
             // if GATT discovery had not finished when onConnectedStateChanged
             // fired. Retrying here recovers without a reconnect.
-            if (_connected) { resolveCharacteristic(); }
+            resolveCharacteristic();
         }
         if (_data == null) {
             // Still nothing to write to. COUNT it - a silent return here is what
@@ -235,27 +304,55 @@ class LiftBleTransport extends LiftTransport {
         }
     }
 
+    // Only the phone running our GATT server is a valid peer. Matching on the
+    // service UUID is the real test; the local name is a lenient fallback for
+    // platforms that do not put the service UUID in the advertisement.
+    function isOurPeripheral(sr as BluetoothLowEnergy.ScanResult) as Boolean {
+        var name = sr.getDeviceName();
+        if (name != null && name.equals(LiftBle.LOCAL_NAME)) { return true; }
+
+        var uuids = sr.getServiceUuids();
+        var u = uuids.next();
+        while (u != null) {
+            var uuid = u as BluetoothLowEnergy.Uuid;
+            if (uuid != null && uuid.equals(LiftBle.serviceUuid())) { return true; }
+            u = uuids.next();
+        }
+        return false;
+    }
+
     function handleScanResults(results as BluetoothLowEnergy.Iterator) as Void {
+        if (_connected || _pairStartedMs != 0) { return; }  // already working on it
+
         var r = results.next();
         while (r != null) {
-            // Iterator.next() is typed Object; narrow it before using it.
             var sr = r as BluetoothLowEnergy.ScanResult;
             if (sr == null) { r = results.next(); continue; }
-            var name = sr.getDeviceName();
-            System.println("LiftBle: saw '" + (name == null ? "?" : name) +
+
+            _sawAdvertisers++;
+            if (!isOurPeripheral(sr)) {
+                // NOT ours - keep scanning. Pairing with a random advertiser was
+                // the original bug.
+                r = results.next();
+                continue;
+            }
+
+            System.println("LiftBle: found our peripheral '" +
+                           (sr.getDeviceName() == null ? "?" : sr.getDeviceName()) +
                            "' rssi=" + sr.getRssi());
-            // Pair with the first advertiser of our service. A stronger filter
-            // (name match) belongs here once the phone app is named-for-real;
-            // getServiceUuids() is available on the ScanResult for that.
+
+            // Stop scanning only once we have found the right device.
             BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
             _scanning = false;
+
             var dev = BluetoothLowEnergy.pairDevice(sr);
             if (dev == null) {
                 System.println("LiftBle: pairDevice returned null; rescanning");
-                _scanning = true;
-                BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
+                resumeScanning();
             } else {
-                System.println("LiftBle: paired with the phone");
+                _pairedDevice = dev;
+                _pairStartedMs = System.getTimer();
+                System.println("LiftBle: paired; waiting for connection");
             }
             return;
         }
@@ -270,7 +367,10 @@ class LiftBleTransport extends LiftTransport {
                               state as BluetoothLowEnergy.ConnectionState) as Void {
         if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
             _device = device;
+            _pairedDevice = device;
             _connected = true;
+            _pairStartedMs = 0;
+            _resolveTries = 0;
             resolveCharacteristic();
             System.println("LiftBle: connected; service=" +
                            (_service == null ? "NOT FOUND" : "ok") +
@@ -281,12 +381,10 @@ class LiftBleTransport extends LiftTransport {
             _device = null;
             _service = null;
             _data = null;
+            _resolveTries = 0;
             System.println("LiftBle: disconnected (state=" + state + ")");
             // Drop back to scanning so a re-paired phone reconnects next set.
-            if (!_scanning) {
-                _scanning = true;
-                BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
-            }
+            resumeScanning();
         }
     }
 

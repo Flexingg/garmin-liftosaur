@@ -174,6 +174,33 @@ Two reasons that was a dead end, both now fixed:
    the characteristic was never resolved" state looked identical to "not connected":
    nothing sent, nothing counted.
 
+**Two further bugs were found from the `ble:lost` + skips symptom** (second hardware
+run) and fixed:
+
+- **No scan filter.** It paired with *whatever advertiser appeared first* — any BLE
+  device in range. Pairing with an unrelated device produces exactly "paired but
+  never usable", and explains a stray 6-digit passkey prompt. It now only pairs when
+  the advertisement contains our service UUID **or** carries the local name
+  `Liftosaur`, and otherwise keeps scanning.
+- **No watchdog.** `pairDevice()` returning a device stopped the scan, and if no
+  connection followed, the transport sat in `lost` forever while every frame was
+  skipped. `tick()` (driven from the sensor tick, so it runs even while IDLE) now
+  abandons and *unpairs* a stalled pair attempt after 8 s and rescans; a connection
+  whose characteristic never resolves is likewise dropped and rescanned.
+
+### Reading the watch screen
+
+| Screen | Meaning |
+|---|---|
+| `ble:off` | transport never started |
+| `ble:scan` + `adv=0` | scanning, and the watch sees **no advertisements at all** — the phone is not advertising (or is backgrounded: Android stops advertising when the app is not in the foreground) |
+| `ble:scan` + `adv` climbing | advertisements *are* arriving but **none matches our service UUID or name** → the phone is advertising the wrong thing (check with nRF Connect) |
+| `ble:waiting` | paired, waiting for the connection to come up (times out after 8 s and rescans) |
+| `ble:no-svc` | connected, but the peer serves no service `4c494654-0001-…` |
+| `ble:no-char` | service found, characteristic `4c494654-0002-…` missing |
+| `ble:ready` | link is up; `snt` should now climb and `skip` stop growing |
+| `ble:lost` | not connected and not scanning — should self-heal within 8 s; if it persists, that is a bug |
+
 What to look at now, in order:
 
 - **The watch screen** names the link state directly:

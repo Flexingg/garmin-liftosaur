@@ -61,14 +61,18 @@ class LiftView extends WatchUi.View {
                     Graphics.COLOR_TRANSPARENT);
         dc.drawText(w/2, h/2 + 58, Graphics.FONT_XTINY,
                     "ble:" + _controller.getTxStatus() +
-                    "  snt=" + _controller.getFramesSent() +
-                    " skip=" + skipped + " fail=" + fails,
+                    " adv=" + _controller.getAdvertisersSeen() +
+                    " snt=" + _controller.getFramesSent(),
+                    Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w/2, h/2 + 74, Graphics.FONT_XTINY,
+                    "skip=" + skipped + " fail=" + fails,
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var drops = _controller.getDropped();
         dc.setColor(drops > 0 ? Graphics.COLOR_ORANGE : Graphics.COLOR_DK_GRAY,
                     Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w/2, h/2 + 80, Graphics.FONT_XTINY,
+        dc.drawText(w/2, h/2 + 90, Graphics.FONT_XTINY,
                     "buf_drop=" + drops + " pend=" + _controller.getPending(),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }

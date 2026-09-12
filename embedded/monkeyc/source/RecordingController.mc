@@ -77,6 +77,7 @@ class RecordingController {
     function getFramesSent() as Number   { return _transport.framesSent(); }
     function getWriteFails() as Number   { return _transport.writeFails(); }
     function getSkipped() as Number      { return _transport.skipped(); }
+    function getAdvertisersSeen() as Number { return _transport.advertisersSeen(); }
     function getTxStatus() as String     { return _transport.statusLine(); }
 
     // Start polling the accelerometer and move to STATE_IDLE. From App.onStart.
@@ -197,6 +198,10 @@ class RecordingController {
 
     // Timer tick: read the latest accelerometer sample. Buffer only while recording.
     function onSensorTick() as Void {
+        // Link upkeep runs regardless of recording state, so the BLE link can
+        // establish (and recover) while the app is just sitting in IDLE.
+        _transport.tick();
+
         if (_state != STATE_RECORDING) {
             return;
         }
