@@ -64,6 +64,39 @@ Two things that cost real time and are now enforced/documented:
 - **Installing happens on physical unplug**, not on software eject. A `.prg`
   still visible in `GARMIN/APPS` means it is not installed yet.
 
+## Phone app: release builds need the network permissions declared explicitly
+
+`flutter build apk --release` produces an APK that **cannot reach the backend** unless
+you declare these in `mobile/flutter/android/app/src/main/AndroidManifest.xml`:
+
+- `<uses-permission android:name="android.permission.INTERNET" />` — Flutter injects
+  INTERNET into the **debug/profile** manifests only, so the release APK has no network
+  access at all while debug builds work fine. This is the #1 "the app can't see the
+  backend" cause.
+- `android:usesCleartextTraffic="true"` on `<application>` — the backend is plain HTTP
+  on the LAN and Android 9+ blocks cleartext by default.
+
+Verify what actually shipped (do not trust the source):
+
+```bash
+unzip -p build/app/outputs/flutter-apk/app-release.apk AndroidManifest.xml \
+  | strings -el | grep -E "permission.INTERNET|usesCleartextTraffic"
+```
+
+## Backend service (Hermes box)
+
+The backend runs as a systemd **user** service so it survives logout and reboot:
+
+```bash
+systemctl --user status garmin-liftosaur-backend.service     # :8008, bound 0.0.0.0
+journalctl --user -u garmin-liftosaur-backend.service -f    # logs
+curl http://192.168.1.146:8008/api/v1/health                 # {"status":"ok", ...}
+```
+
+Unit: `~/.config/systemd/user/garmin-liftosaur-backend.service`. It binds `0.0.0.0`
+on purpose — the phone reaches it over the LAN, and the app's default backend URL is
+`http://192.168.1.146:8008/api/v1`.
+
 ## Roadmap
 
 - **Phase 0** — architecture + data contracts + scaffolding ✅

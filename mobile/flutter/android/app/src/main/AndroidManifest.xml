@@ -3,6 +3,11 @@
          server that the watch connects to as a central. Android 12+ requires the
          runtime permissions below; the legacy ones are needed for API < 31.
          BLUETOOTH_ADVERTISE is what makes this a *peripheral*, not a scanner. -->
+    <!-- INTERNET is required in the RELEASE build: Flutter only injects this
+         permission into the debug/profile manifests, so without this line the
+         release APK cannot make any network call and the app looks like it
+         "can't see the backend". -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
@@ -13,7 +18,11 @@
     <application
         android:label="liftosaur_garmin"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic: the backend is reached over plain HTTP on the
+             LAN (http://<host>:8008/api/v1). Android 9+ blocks cleartext by
+             default, which also presents as "can't reach the backend". -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

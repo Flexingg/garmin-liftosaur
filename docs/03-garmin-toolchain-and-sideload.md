@@ -159,9 +159,14 @@ strings -a bin/Liftosaur.prg | grep -o -E '006-B[0-9]{4}-00' | sort -u
 ```
 
 Benign warnings you can ignore at this project's `typecheck=1`:
-`Cannot determine if container access is using container type`,
-`Statement is not reachable`, and the 16×16-vs-61×61 launcher icon notice (it is
-scaled; supply a 61×61 asset if you care).
+`Cannot determine if container access is using container type` and
+`Statement is not reachable`.
+
+**The launcher icon warning is NOT benign.** The Device Reference for venu2s lists
+**Launcher Icon Size: 61 × 61**. Shipping a 16 × 16 asset compiles fine but the
+watch falls back to its placeholder glyph in the app list instead of showing the
+app icon. `resources/images/icon.png` is now authored at 61 × 61 and the warning
+is gone — treat any future launcher-icon notice as a real defect, not noise.
 
 ### Build flags that matter
 
