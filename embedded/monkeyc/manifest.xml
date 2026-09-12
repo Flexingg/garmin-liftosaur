@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="1">
-  <iq:application id="B1E2F3A4-B5C6-4D7E-8F90-1234567890AB"
+  <!-- App UUID. Keep this STABLE: the device keys an installed app by this id.
+       This is the id of the build currently installed on the Venu 2S, so
+       rebuilding with this same value UPDATES that app in place instead of
+       adding a duplicate entry to the watch's app list. -->
+  <iq:application id="9441493B-9C50-48A9-8E21-0416DB9F9F10"
                   name="@Strings.AppName" type="watch-app" entry="LiftosaurApp"
                   launcherIcon="@Drawables.LauncherIcon">
     <iq:products>
       <iq:product id="venu2" />
+      <iq:product id="venu2s" />
     </iq:products>
     <iq:permissions>
       <iq:uses-permission id="Sensor" />
