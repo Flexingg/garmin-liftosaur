@@ -54,6 +54,19 @@ Back the key up — you need the same one to update the app. Keys are
 `.gitignore`d and must never be committed.
 **Registering the key with Garmin is not required for sideloading.**
 
+## Transports (watch -> phone)
+
+Frames are delivered through a swappable `LiftTransport` (`source/Transport.mc`).
+The default is a **tee**: `LiftBleTransport` (real-time BLE) **and**
+`LiftLogTransport` (device console). The console log is the only observability on a
+physical watch, so it stays on even while streaming.
+
+**BLE roles are inverted:** Connect IQ exposes BLE in the *central* role only, so
+the **phone** is the peripheral (GATT server) and the **watch** is the central that
+scans, pairs and writes chunk fragments to it. Frame encoding is
+`source/LiftBinary.mc` (compact binary, docs/01 §2–§3). Full details, UUIDs and the
+fragmentation scheme: `docs/04-ble-transport.md`.
+
 ## Sideload to the watch
 
 1. Watch → Settings → System → **USB Mode → MTP** (not "Garmin" mode), data cable.

@@ -1,6 +1,6 @@
 // End-to-end smoke test: synthetic watch frames -> SetSession -> real backend.
 //
-//   cd backend/python && ./.venv/bin/uvicorn app.main:app --port 8000
+//   cd backend/python && ./.venv/bin/uvicorn app.main:app --port 8008
 //   cd mobile/flutter && ~/flutter/bin/dart run tool/smoke_e2e.dart [baseUrl]
 //
 // Imports only the pure-Dart layers of the package (no Flutter), so it runs on
@@ -13,7 +13,7 @@ import 'package:liftosaur_garmin/frame_source.dart';
 import 'package:liftosaur_garmin/set_session.dart';
 
 Future<int> main(List<String> args) async {
-  final base = args.isNotEmpty ? args.first : 'http://127.0.0.1:8000/api/v1';
+  final base = args.isNotEmpty ? args.first : 'http://127.0.0.1:8008/api/v1';
   final client = BackendClient(baseUrl: Uri.parse(base));
 
   stdout.writeln('backend: $base');

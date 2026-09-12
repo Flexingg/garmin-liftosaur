@@ -5,7 +5,7 @@ endpoint. Physics (Phase 4) and ML rep counting (Phase 5) are stubbed.
 
 Run (dev):
     pip install -r requirements.txt
-    uvicorn app.main:app --reload --port 8000
+    uvicorn app.main:app --reload --port 8008
 """
 from __future__ import annotations
 

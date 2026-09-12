@@ -39,10 +39,14 @@ module LiftFrame {
     // Epoch ms. Time.now().value() is whole seconds; System.getTimer() (ms since
     // boot) adds sub-second resolution. Consumers must not assume better than
     // rate_hz spacing between samples regardless (docs/01 §4).
-    function epochMs() as Number {
+    //
+    // Must be Long: epoch-ms is ~1.7e12, which overflows a 32-bit Monkey C
+    // Number. Doing `secs * 1000` in Number arithmetic silently produced a
+    // garbage timestamp before this was fixed.
+    function epochMs() as Long {
         var secs = Time.now().value();
         var subMs = System.getTimer() % 1000;
-        return (secs * 1000) + subMs;
+        return (secs.toLong() * 1000) + subMs;
     }
 
     // Shared header fields (docs/01 §2).

@@ -14,6 +14,13 @@
 
 Every frame carries the common header, then a type-specific body.
 
+> **Transport note (2026-09-12):** the BLE link is implemented with the roles
+> *inverted* — the **phone** is the BLE peripheral (GATT server) and the **watch**
+> is the central, because Connect IQ exposes BLE only in the central role. Over
+> BLE the **binary** form below (§2, §3) is used; the JSON/dict form (§7) is for
+> the `Toybox.Communications` path. Fragmentation and the exact byte layout are in
+> `docs/04-ble-transport.md`.
+
 ## 2. Common header (binary, 24 bytes)
 
 | Offset | Size | Field            | Type        | Notes                                        |

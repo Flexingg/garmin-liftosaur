@@ -1,4 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- BLE PERIPHERAL (docs/04-ble-transport.md). This phone advertises a GATT
+         server that the watch connects to as a central. Android 12+ requires the
+         runtime permissions below; the legacy ones are needed for API < 31.
+         BLUETOOTH_ADVERTISE is what makes this a *peripheral*, not a scanner. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <application
         android:label="liftosaur_garmin"
         android:name="${applicationName}"

@@ -17,20 +17,31 @@ watch frames (docs/01)          SetSession                  backend (docs/02)
 | `lib/set_session.dart` | Assembles chunks into one set; detects seq gaps (dropped frames), duplicates and post-`SET_END` traffic; renders the docs/02 request body |
 | `lib/backend_client.dart` | `POST /api/v1/sets`, `GET /api/v1/health`; physics decoding + a plausibility check for the "10,000 W" failure mode |
 | `lib/frame_source.dart` | `FrameSource` abstraction + `SyntheticFrameSource` (deterministic squat signal) |
+| `lib/binary_frames.dart` | Compact binary frame codec (docs/01 §2–3) + BLE fragmenter/reassembler |
+| `lib/ble_link.dart` | **The real-time BLE link.** This phone is the *peripheral*: it advertises a GATT server the watch writes chunks to |
 | `lib/main.dart` | UI: backend health, capture stats, upload, physics result |
 
-**No third-party packages.** The HTTP client uses `dart:io` directly, so the app
-has zero pub dependencies to keep in sync and every layer below the radio is
-runnable on the Dart VM.
+**One dependency:** `flutter_ble_peripheral`, and only for the BLE link. The
+backend client uses `dart:io` directly, so everything except the radio runs on the
+plain Dart VM and is unit-tested without a device.
 
-## What is NOT wired yet
+## The BLE link (roles are inverted)
 
-The watch link itself. `docs/00 §4` still has an open decision — BLE GATT
-peripheral (option A) vs `Toybox.Communications.transmit` (option B) — so the
-app drives the pipeline from `SyntheticFrameSource`. When the transport is
-chosen it is a single `FrameSource` implementation away; nothing else changes.
-On the watch side, frames are currently handed to `LiftLogTransport` (console),
-which is the same seam.
+`docs/04-ble-transport.md` has the full story. The short version: Garmin's Connect
+IQ BLE API is **central-role only**, so a watch app cannot be a peripheral. This
+app therefore acts as the **peripheral / GATT server** and the watch connects as
+the central and writes chunk fragments to us.
+
+Tap **Start BLE link**, then run the watch app and press Start. The status line
+reports link state, negotiated MTU and fragment/frame counters so you can see
+exactly where a problem is.
+
+Frame decode + reassembly (`binary_frames.dart`, `ble_link.dart`) are pure Dart and
+covered by unit tests, including golden byte vectors and corrupt/partial/duplicate
+fragments.
+
+`SyntheticFrameSource` remains for developing without hardware, and drives the exact
+same session/upload path.
 
 ## Run
 
@@ -44,9 +55,9 @@ End-to-end against the real backend:
 
 ```bash
 # terminal 1
-cd ../../backend/python && ./.venv/bin/uvicorn app.main:app --port 8231
+cd ../../backend/python && ./.venv/bin/uvicorn app.main:app --port 8008
 # terminal 2
-dart run tool/smoke_e2e.dart http://127.0.0.1:8231/api/v1     # prints physics, exits non-zero on failure
+dart run tool/smoke_e2e.dart http://127.0.0.1:8008/api/v1     # prints physics, exits non-zero on failure
 ```
 
 `smoke_e2e.dart` imports only the pure-Dart layers, so it runs without Flutter
@@ -54,4 +65,4 @@ and without a device. It is what caught the Nyquist bug that made the backend
 reject every 20 Hz set (see `backend/python/tests/test_nyquist_regression.py`).
 
 Point the UI at the backend with the "Backend base URL" field
-(default `http://192.168.1.146:8000/api/v1`).
+(default `http://192.168.1.146:8008/api/v1`).

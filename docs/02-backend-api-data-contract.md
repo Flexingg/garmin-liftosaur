@@ -3,7 +3,7 @@
 **Owner:** Lead Agent · **Consumers:** Mobile Agent (producer), Data/ML Agent (consumer)
 **Status:** v1.0 · Phase 0 / Task 0.2
 
-Base URL: `http://<host>:8000/api/v1` (dev) · All bodies JSON · Responses JSON.
+Base URL: `http://<host>:8008/api/v1` (dev) · All bodies JSON · Responses JSON.
 
 ## 1. `POST /api/v1/sets` — ingest a completed set
 

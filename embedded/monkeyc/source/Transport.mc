@@ -1,14 +1,18 @@
 // Liftosaur — transport seam for watch -> phone frames.
 // Owner: Embedded Agent.
 //
-// Phase 2 needs a decision (docs/00 §4): BLE GATT peripheral (option A) vs
-// Toybox.Communications.transmit over the phone (option B). Rather than bake
-// that in, the controller talks to a LiftTransport; swapping the whole
-// transport is one line in RecordingController.initialize().
+// Frames are handed to a LiftTransport so the delivery mechanism stays
+// swappable. Current implementations:
 //
-// LiftLogTransport is the default: it writes the contract frame to the device
-// console, which makes the whole pipeline observable on the watch today (and in
-// `monkeydo`/simulator logs) with no BLE permission and no phone.
+//   LiftLogTransport  — writes the contract frame to the device console. This
+//                       is the only observability we have on a physical watch,
+//                       so it stays in the default stack.
+//   LiftBleTransport  — BLE central -> the phone's GATT server (see that file
+//                       for the role-inversion explanation and its STATUS note).
+//
+// The default is a TEE of both: logs every frame AND streams it over BLE, so
+// Hardware Checkpoint 2 can be checked against the device log even when the
+// phone link is misbehaving.
 
 import Toybox.Lang;
 import Toybox.System;
@@ -19,13 +23,28 @@ class LiftTransport {
     function emit(frame as Dictionary) as Void {
     }
 
+    // Acquire/release any connection resources. No-ops by default.
+    function start() as Void {
+    }
+
+    function stop() as Void {
+    }
+
     // Human-readable name for the UI/debug.
     function name() as String {
         return "null";
     }
+
+    function framesSent() as Number {
+        return 0;
+    }
+
+    function writeFails() as Number {
+        return 0;
+    }
 }
 
-// Default transport: log the frame. Used for HW checkpoint 2 validation.
+// Logs the frame. Used for HW checkpoint validation and as a fallback.
 class LiftLogTransport extends LiftTransport {
 
     private var _frames;
@@ -44,13 +63,57 @@ class LiftLogTransport extends LiftTransport {
         return "log";
     }
 
-    function frames() as Number {
+    function framesSent() as Number {
         return _frames;
     }
 }
 
-// Phase 2 placeholder — BLE peripheral (docs/00 §4 option A). Not yet wired:
-// requires the BluetoothLowEnergy permission in manifest.xml and a GATT service
-// definition, and the phone-side central in mobile/flutter.
-//
-// class LiftBleTransport extends LiftTransport { ... }
+// Fan a frame out to several transports. Used to keep the console log alive
+// alongside BLE streaming.
+class LiftTeeTransport extends LiftTransport {
+
+    private var _parts;
+
+    function initialize(parts as Array) {
+        LiftTransport.initialize();
+        _parts = parts;
+    }
+
+    function start() as Void {
+        for (var i = 0; i < _parts.size(); i++) {
+            _parts[i].start();
+        }
+    }
+
+    function stop() as Void {
+        for (var i = 0; i < _parts.size(); i++) {
+            _parts[i].stop();
+        }
+    }
+
+    function emit(frame as Dictionary) as Void {
+        for (var i = 0; i < _parts.size(); i++) {
+            _parts[i].emit(frame);
+        }
+    }
+
+    function name() as String {
+        var s = "";
+        for (var i = 0; i < _parts.size(); i++) {
+            if (i > 0) { s = s + "+"; }
+            s = s + _parts[i].name();
+        }
+        return s;
+    }
+
+    // Report the FIRST transport's counters (the primary link, i.e. BLE).
+    function framesSent() as Number {
+        if (_parts.size() == 0) { return 0; }
+        return _parts[0].framesSent();
+    }
+
+    function writeFails() as Number {
+        if (_parts.size() == 0) { return 0; }
+        return _parts[0].writeFails();
+    }
+}

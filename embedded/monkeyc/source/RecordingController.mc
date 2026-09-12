@@ -55,7 +55,9 @@ class RecordingController {
         _lastLogMs  = 0;
         _timer      = null;
         _emitTimer  = null;
-        _transport  = new LiftLogTransport();   // swap for the BLE/HTTP transport in Phase 2
+        // BLE streaming teed with the console log: the log is the only
+        // observability we have on a physical watch, so keep it while streaming.
+        _transport  = new LiftTeeTransport([new LiftBleTransport(), new LiftLogTransport()]);
         _seq        = 0;
         _chunksSent = 0;
         _exerciseId = 0;                        // set by CMD frames in Phase 3
@@ -68,6 +70,8 @@ class RecordingController {
     function getPending() as Number    { return _buffer.pendingCount(); }
     function getDropped() as Number    { return _buffer.dropped(); }
     function getTransportName() as String { return _transport.name(); }
+    function getFramesSent() as Number   { return _transport.framesSent(); }
+    function getWriteFails() as Number   { return _transport.writeFails(); }
 
     // Start polling the accelerometer and move to STATE_IDLE. From App.onStart.
     function start() as Void {
@@ -77,6 +81,7 @@ class RecordingController {
         _emitTimer = new Timer.Timer();
         _emitTimer.start(method(:onEmitTick), 1000, true);  // ~1 Hz chunk cadence
 
+        _transport.start();
         _state = STATE_IDLE;
         WatchUi.requestUpdate();
         System.println("Liftosaur: polling started, STATE_IDLE, transport=" +
@@ -93,6 +98,7 @@ class RecordingController {
             _emitTimer.stop();
             _emitTimer = null;
         }
+        _transport.stop();
         _state = STATE_INIT;
     }
 

@@ -13,6 +13,9 @@
     </iq:products>
     <iq:permissions>
       <iq:uses-permission id="Sensor" />
+      <!-- BLE central role: the WATCH is the central and the phone hosts
+           the GATT server. See docs/04-ble-transport.md. -->
+      <iq:uses-permission id="BluetoothLowEnergy" />
       <iq:uses-permission id="Fit" />
     </iq:permissions>
     <iq:languages>

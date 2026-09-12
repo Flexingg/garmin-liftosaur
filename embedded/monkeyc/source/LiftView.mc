@@ -52,10 +52,14 @@ class LiftView extends WatchUi.View {
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var drops = _controller.getDropped();
-        dc.setColor(drops > 0 ? Graphics.COLOR_ORANGE : Graphics.COLOR_DK_GRAY,
+        var fails = _controller.getWriteFails();
+        dc.setColor((drops > 0 || fails > 0) ? Graphics.COLOR_ORANGE
+                                             : Graphics.COLOR_DK_GRAY,
                     Graphics.COLOR_TRANSPARENT);
         dc.drawText(w/2, h/2 + 65, Graphics.FONT_XTINY,
-                    "tx=" + _controller.getTransportName() + " drops=" + drops,
+                    _controller.getTransportName() + " sent=" +
+                    _controller.getFramesSent() + " drop=" + drops +
+                    " fail=" + fails,
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 }

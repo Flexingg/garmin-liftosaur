@@ -30,6 +30,9 @@ kinematic physics and machine-learning rep detection.
 - **`docs/03-garmin-toolchain-and-sideload.md`** — ⭐ verified Connect IQ toolchain,
   signing keys, building, sideloading, failure diagnosis, and how to start a **new**
   Garmin app. Read this before touching the watch.
+- **`docs/04-ble-transport.md`** — ⭐ the real-time BLE link: why the phone is the
+  peripheral and the watch is the central, the UUIDs, the binary wire format,
+  fragmentation, and what is/isn't verified.
 
 ## Watch app: build & install (verified on hardware)
 
@@ -58,10 +61,13 @@ Two things that cost real time and are now enforced/documented:
     drops; transport is a swappable seam (`source/Transport.mc`, currently logs)
   - ✅ phone: frame decoding, set assembly with seq-gap detection and the backend
     request body (`mobile/flutter/lib/`)
-  - ⬜ **open decision (docs/00 §4):** BLE GATT peripheral (option A) vs
-    `Toybox.Communications.transmit` (option B). Both ends are now transport-
-    agnostic, so this is one implementation each side.
-  - ⬜ Hardware Checkpoint 2 (no dropped chunks on real hardware)
+  - ✅ **transport decided: BLE, with the roles INVERTED** (docs/04). Connect IQ
+    BLE is central-only, so the PHONE advertises a GATT server and the WATCH
+    connects as a central and writes chunk fragments to it. Frame codec +
+    reassembly are unit-tested with golden vectors; the watch app compiles with
+    `source/LiftBleTransport.mc`.
+  - ⬜ Hardware Checkpoint 2 — watch pairs with the phone and streams chunks
+    without dropped frames (**not yet run on hardware**)
 - **Phase 3** — Liftosaur API integration (fetch weight/exercise) 🛑 HW checkpoint 3
 - **Phase 4** — Physics engine + backend ingestion ✅ *verified end-to-end*
   (`mobile/flutter/tool/smoke_e2e.dart` → 20 Hz set → peak 278 W / 1.62 m/s).
@@ -76,7 +82,7 @@ phone/watch) — the phases are gated on those validations.
 
 ```bash
 cd backend/python && ./.venv/bin/python -m pytest -q      # 23 passed
-cd mobile/flutter && flutter test                          # 19 passed
+cd mobile/flutter && flutter test                          # 37 passed
 cd embedded/monkeyc && ./tools/linux-build.sh venu2s       # BUILD SUCCESSFUL
 ```
 

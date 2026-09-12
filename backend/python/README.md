@@ -6,8 +6,8 @@ Owner: Data/ML Agent.
 cd /c/RandallEngineering/Garmin_Liftosaur/backend/python
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt      # (Windows)
-.venv/Scripts/uvicorn app.main:app --reload --port 8000
-curl http://127.0.0.1:8000/api/v1/health
+.venv/Scripts/uvicorn app.main:app --reload --port 8008
+curl http://127.0.0.1:8008/api/v1/health
 ```
 
 ## Phases
@@ -30,4 +30,4 @@ pipeline recovers realistic velocity/power within the contract's bounds).
 
 ## Contract
 
-API surface: `docs/02-backend-api-data-contract.md`. Base `http://<host>:8000/api/v1`.
+API surface: `docs/02-backend-api-data-contract.md`. Base `http://<host>:8008/api/v1`.

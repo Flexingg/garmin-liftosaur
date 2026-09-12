@@ -62,10 +62,13 @@ Two candidate transports for watch → phone. Decision needed before Phase 2.
 | **A. Garmin Connect IQ BLE (`Toybox.BluetoothLowEnergy`)** | Watch acts as a BLE peripheral; Flutter uses a GATT client (`flutter_blue_plus`) | Direct to custom app, no Garmin Connect dependency, low latency | More GATT plumbing; only one Central at a time |
 | **B. `Toybox.Communications.transmit` (HTTP over phone)** | Watch posts via the phone's network through the Garmin app | Simplest to get working | Requires Garmin Connect app; not raw BLE; not real-time streaming |
 
-The user's plan mentions `watch_connectivity_garmin` / `Toybox.Communications.transmit`
-(option B-ish). **Recommendation: Option A for the live streaming chunks** (real-time,
-no dropped packets per checkpoint 2), with the payload contract kept identical so the
-transport layer can be swapped. Confirm before Phase 2.
+**DECIDED (2026-09-12): BLE — but the roles are INVERTED.** Real-time BLE won.
+
+Garmin's Connect IQ BLE API is **central role only** (no advertising, no GATT
+server), so the watch *cannot* be a BLE peripheral. Instead the **phone** is the
+peripheral/GATT server and the **watch** is the central that scans, pairs and
+writes chunk frames to it. Both ends are implemented and documented in
+`docs/04-ble-transport.md` — read that before touching either side.
 
 ## 5. Data flow end-to-end
 

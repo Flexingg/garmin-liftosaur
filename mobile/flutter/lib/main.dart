@@ -13,13 +13,14 @@ library;
 import 'package:flutter/material.dart';
 
 import 'backend_client.dart';
+import 'ble_link.dart';
 import 'frame_source.dart';
 import 'set_session.dart';
 
 void main() => runApp(const LiftosaurApp());
 
 /// Backend on the self-hosted Hermes box (docs/02 dev base URL).
-const String kDefaultBackend = 'http://192.168.1.146:8000/api/v1';
+const String kDefaultBackend = 'http://192.168.1.146:8008/api/v1';
 
 class LiftosaurApp extends StatelessWidget {
   const LiftosaurApp({super.key});
@@ -47,6 +48,7 @@ class _CapturePageState extends State<CapturePage> {
   final _exerciseCtrl = TextEditingController(text: 'Squat');
 
   FrameSource? _source;
+  BlePeripheralFrameSource? _ble;
   SetSession? _session;
   String _status = 'idle';
   String? _health;
@@ -83,31 +85,62 @@ class _CapturePageState extends State<CapturePage> {
     }
   }
 
-  Future<void> _startCapture() async {
-    final src = SyntheticFrameSource(rateHz: 20, seconds: 12, exerciseId: 1);
+
+  /// Wire a frame source into a fresh session and start it. Shared by the
+  /// synthetic replay and the real BLE link so both exercise identical code.
+  Future<void> _captureFrom(FrameSource src, {String label = ''}) async {
     final session = SetSession(
       userId: 'jonathan',
       exerciseId: 1,
-      exerciseName: _exerciseCtrl.text.trim().isEmpty ? 'Squat' : _exerciseCtrl.text.trim(),
+      exerciseName:
+          _exerciseCtrl.text.trim().isEmpty ? 'Squat' : _exerciseCtrl.text.trim(),
       prescribedWeightLbs: double.tryParse(_weightCtrl.text.trim()) ?? 225,
       watchModel: 'venu2s',
     );
-
     src.frames.listen((frame) {
       session.addFrame(frame);
-      setState(() => _status = session.summary());
+      setState(() => _status = '${session.summary()}${_bleDetail()}');
     });
-
     setState(() {
       _source = src;
       _session = session;
       _result = null;
       _error = null;
-      _status = 'starting…';
+      _status = 'starting $label…';
     });
-
     await src.start();
-    if (mounted) setState(() => _status = '${session.summary()} (complete)');
+  }
+
+  /// BLE-specific detail for the status line (link state, MTU, decode counters).
+  String _bleDetail() {
+    final ble = _ble;
+    if (ble == null) return '';
+    final parts = <String>[
+      ble.isRunning ? 'ble:advertising' : 'ble:down',
+      if (ble.negotiatedMtu != null) 'mtu=${ble.negotiatedMtu}',
+      ble.assembler.summary(),
+    ];
+    return '\n${parts.join('  ')}';
+  }
+
+  /// Start the phone as a BLE peripheral and stream from the watch.
+  Future<void> _startBle() async {
+    final ble = BlePeripheralFrameSource();
+    setState(() => _ble = ble);
+    await _captureFrom(ble, label: 'BLE peripheral');
+    if (!ble.isRunning) {
+      setState(() => _error =
+          'BLE peripheral did not start: ${ble.lastError ?? ble.lastState}');
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _startCapture() async {
+    final src = SyntheticFrameSource(rateHz: 20, seconds: 12, exerciseId: 1);
+    await _captureFrom(src, label: 'synthetic set');
+    if (mounted) {
+      setState(() => _status = '${_session?.summary() ?? ''} (complete)');
+    }
   }
 
   Future<void> _stopCapture() async {
@@ -153,7 +186,7 @@ class _CapturePageState extends State<CapturePage> {
             controller: _backendCtrl,
             decoration: const InputDecoration(
               labelText: 'Backend base URL',
-              helperText: 'docs/02: http://<host>:8000/api/v1',
+              helperText: 'docs/02: http://<host>:8008/api/v1',
             ),
           ),
           const SizedBox(height: 8),
@@ -181,6 +214,11 @@ class _CapturePageState extends State<CapturePage> {
           ]),
           const SizedBox(height: 16),
           Wrap(spacing: 12, runSpacing: 8, children: [
+            FilledButton.icon(
+              onPressed: _startBle,
+              icon: const Icon(Icons.bluetooth),
+              label: const Text('Start BLE link'),
+            ),
             FilledButton.icon(
               onPressed: _startCapture,
               icon: const Icon(Icons.play_arrow),
@@ -214,9 +252,10 @@ class _CapturePageState extends State<CapturePage> {
                 ],
                 const SizedBox(height: 8),
                 const Text(
-                  'Transport note: the watch link (BLE / Communications, docs/00 §4) '
-                  'is not wired yet, so this screen replays a synthetic set to '
-                  'exercise the full frame -> session -> backend path.',
+                  'BLE link: this phone is the PERIPHERAL (GATT server) and the watch '
+                  'is the central that writes chunk frames here — Garmin cannot make a '
+                  'watch a peripheral. Start the BLE link, then run the watch app and '
+                  'press Start. See docs/04-ble-transport.md.',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ]),

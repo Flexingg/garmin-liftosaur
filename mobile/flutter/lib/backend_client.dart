@@ -94,7 +94,7 @@ class BackendClient {
   }) : _client = client ?? HttpClient();
 
   /// Convenience: `BackendClient.forHost('192.168.1.146')`.
-  factory BackendClient.forHost(String host, {int port = 8000, HttpClient? client}) =>
+  factory BackendClient.forHost(String host, {int port = 8008, HttpClient? client}) =>
       BackendClient(
         baseUrl: Uri.parse('http://$host:$port/api/v1'),
         client: client,
