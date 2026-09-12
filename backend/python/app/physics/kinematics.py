@@ -41,6 +41,21 @@ class PhysicsResult:
     warnings: list[str]
 
 
+def effective_cutoff(desired_hz: float, rate: float) -> float:
+    """Clamp a desired cutoff into (0, nyquist), with margin.
+
+    A cutoff at or above Nyquist is unrepresentable and scipy raises. That is a
+    real case here, not a theoretical one: Garmin's Toybox.Sensor delivers
+    ~20 Hz on a Venu 2S, so Nyquist is 10 Hz -- exactly the nominal 10 Hz
+    low-pass design. Without this clamp every ~20 Hz set from the watch is
+    rejected with HTTP 422 before any physics runs.
+    """
+    if rate <= 0:
+        raise ValueError("rate must be > 0")
+    max_cut = 0.45 * rate  # keep a clear margin below Nyquist
+    return max_cut if desired_hz >= max_cut else desired_hz
+
+
 def _butter(order: int, cutoff: float, rate: float, kind: str):
     """Design a zero-phase Butterworth filter, guarding against nyquist issues."""
     nyq = 0.5 * rate
@@ -51,9 +66,15 @@ def _butter(order: int, cutoff: float, rate: float, kind: str):
 
 
 def _filtfilt(x: np.ndarray, rate: float, lowpass: bool = True) -> np.ndarray:
-    """Apply a zero-phase (filtfilt) Butterworth filter to a 1-D signal."""
+    """Apply a zero-phase (filtfilt) Butterworth filter to a 1-D signal.
+
+    The requested cutoff is clamped against Nyquist first (see
+    `effective_cutoff`), so low sample rates degrade the filter bandwidth
+    instead of failing the whole request.
+    """
     order = _FILTER_ORDER
-    cutoff = _LOWPASS_CUTOFF_HZ if lowpass else _HIGHPASS_CUTOFF_HZ
+    desired = _LOWPASS_CUTOFF_HZ if lowpass else _HIGHPASS_CUTOFF_HZ
+    cutoff = effective_cutoff(desired, rate)
     kind = "low" if lowpass else "high"
     b, a = _butter(order, cutoff, rate, kind)
     padlen = 3 * (2 * order + 1)  # enough edge padding for filtfilt

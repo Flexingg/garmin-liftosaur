@@ -52,10 +52,31 @@ Two things that cost real time and are now enforced/documented:
 - **Phase 0** — architecture + data contracts + scaffolding ✅
 - **Phase 1** — Garmin core UI + sensor listener (Monkey C) ✅ **Hardware Checkpoint 1 PASSED 2026-09-12**
   (app installs on the Venu 2S, launches, and its state machine responds to Start/Stop)
-- **Phase 2** — BLE data bridge (Flutter + Monkey C transmit) 🛑 HW checkpoint 2
+- **Phase 2** — data bridge 🚧 *in progress*
+  - ✅ watch: contract frames built (`source/LiftFrame.mc`) and emitted on a ~1 Hz
+    chunk cadence; `SampleBuffer` drains a bounded pending queue and counts
+    drops; transport is a swappable seam (`source/Transport.mc`, currently logs)
+  - ✅ phone: frame decoding, set assembly with seq-gap detection and the backend
+    request body (`mobile/flutter/lib/`)
+  - ⬜ **open decision (docs/00 §4):** BLE GATT peripheral (option A) vs
+    `Toybox.Communications.transmit` (option B). Both ends are now transport-
+    agnostic, so this is one implementation each side.
+  - ⬜ Hardware Checkpoint 2 (no dropped chunks on real hardware)
 - **Phase 3** — Liftosaur API integration (fetch weight/exercise) 🛑 HW checkpoint 3
-- **Phase 4** — Physics engine + backend ingestion 🛑 HW checkpoint 4
+- **Phase 4** — Physics engine + backend ingestion ✅ *verified end-to-end*
+  (`mobile/flutter/tool/smoke_e2e.dart` → 20 Hz set → peak 278 W / 1.62 m/s).
+  Fixed a Nyquist bug that rejected every ~20 Hz set — see
+  `backend/python/tests/test_nyquist_regression.py`.
 - **Phase 5** — ML rep detection 🛑 HW checkpoint 5
 
 Hardware checkpoints require human action (sideload `.prg`, run the app on the physical
 phone/watch) — the phases are gated on those validations.
+
+## Tests
+
+```bash
+cd backend/python && ./.venv/bin/python -m pytest -q      # 23 passed
+cd mobile/flutter && flutter test                          # 19 passed
+cd embedded/monkeyc && ./tools/linux-build.sh venu2s       # BUILD SUCCESSFUL
+```
+

@@ -1,122 +1,268 @@
+/// Liftosaur companion — Flutter phone app.
+///
+/// Pipeline: watch frames (docs/01) -> [SetSession] -> POST /api/v1/sets
+/// (docs/02) -> physics + rep count shown in the UI.
+///
+/// The watch transport (docs/00 §4: BLE GATT peripheral vs
+/// `Toybox.Communications`) is not wired yet, so the screen currently drives the
+/// full pipeline from [SyntheticFrameSource]. That is deliberate: it exercises
+/// every layer below the radio, so when the transport lands it is a single
+/// `FrameSource` swap.
+library;
+
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+import 'backend_client.dart';
+import 'frame_source.dart';
+import 'set_session.dart';
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+void main() => runApp(const LiftosaurApp());
 
-  // This widget is the root of your application.
+/// Backend on the self-hosted Hermes box (docs/02 dev base URL).
+const String kDefaultBackend = 'http://192.168.1.146:8000/api/v1';
+
+class LiftosaurApp extends StatelessWidget {
+  const LiftosaurApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Liftosaur Companion',
+      theme: ThemeData(colorSchemeSeed: Colors.deepPurple, useMaterial3: true),
+      home: const CapturePage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class CapturePage extends StatefulWidget {
+  const CapturePage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<CapturePage> createState() => _CapturePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _CapturePageState extends State<CapturePage> {
+  final _backendCtrl = TextEditingController(text: kDefaultBackend);
+  final _weightCtrl = TextEditingController(text: '225');
+  final _exerciseCtrl = TextEditingController(text: 'Squat');
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  FrameSource? _source;
+  SetSession? _session;
+  String _status = 'idle';
+  String? _health;
+  IngestResponse? _result;
+  String? _error;
+  bool _busy = false;
+
+  BackendClient get _client => BackendClient(baseUrl: Uri.parse(_backendCtrl.text.trim()));
+
+  @override
+  void initState() {
+    super.initState();
+    // Kick off a health probe so the first screen tells you whether the
+    // backend is reachable before you record anything.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkHealth());
+  }
+
+  @override
+  void dispose() {
+    _source?.stop();
+    _backendCtrl.dispose();
+    _weightCtrl.dispose();
+    _exerciseCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkHealth() async {
+    setState(() => _health = 'checking…');
+    try {
+      final body = await _client.health();
+      setState(() => _health = 'ok · v${body['version']} · db=${body['db']}');
+    } catch (e) {
+      setState(() => _health = 'unreachable — $e');
+    }
+  }
+
+  Future<void> _startCapture() async {
+    final src = SyntheticFrameSource(rateHz: 20, seconds: 12, exerciseId: 1);
+    final session = SetSession(
+      userId: 'jonathan',
+      exerciseId: 1,
+      exerciseName: _exerciseCtrl.text.trim().isEmpty ? 'Squat' : _exerciseCtrl.text.trim(),
+      prescribedWeightLbs: double.tryParse(_weightCtrl.text.trim()) ?? 225,
+      watchModel: 'venu2s',
+    );
+
+    src.frames.listen((frame) {
+      session.addFrame(frame);
+      setState(() => _status = session.summary());
     });
+
+    setState(() {
+      _source = src;
+      _session = session;
+      _result = null;
+      _error = null;
+      _status = 'starting…';
+    });
+
+    await src.start();
+    if (mounted) setState(() => _status = '${session.summary()} (complete)');
+  }
+
+  Future<void> _stopCapture() async {
+    await _source?.stop();
+    if (mounted) setState(() => _status = 'stopped');
+  }
+
+  Future<void> _upload() async {
+    final session = _session;
+    if (session == null) {
+      setState(() => _error = 'not ready: no set captured yet');
+      return;
+    }
+    final blockers = session.blockers();
+    if (blockers.isNotEmpty) {
+      setState(() => _error = 'not ready: ${blockers.join(', ')}');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _result = null;
+    });
+    try {
+      final res = await _client.ingestSet(session.toBackendPayload());
+      setState(() => _result = res);
+    } catch (e) {
+      setState(() => _error = '$e');
+    } finally {
+      setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final session = _session;
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      appBar: AppBar(title: const Text('Liftosaur Companion')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          TextField(
+            controller: _backendCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Backend base URL',
+              helperText: 'docs/02: http://<host>:8000/api/v1',
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: Text('health: ${_health ?? '…'}')),
+            TextButton(onPressed: _checkHealth, child: const Text('Recheck')),
+          ]),
+          const Divider(height: 32),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _exerciseCtrl,
+                decoration: const InputDecoration(labelText: 'Exercise'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 110,
+              child: TextField(
+                controller: _weightCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Weight (lbs)'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 16),
+          Wrap(spacing: 12, runSpacing: 8, children: [
+            FilledButton.icon(
+              onPressed: _startCapture,
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Replay synthetic set'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _stopCapture,
+              icon: const Icon(Icons.stop),
+              label: const Text('Stop'),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: _busy ? null : _upload,
+              icon: const Icon(Icons.cloud_upload),
+              label: const Text('Upload set'),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('capture: $_status'),
+                if (session != null) ...[
+                  const SizedBox(height: 6),
+                  Text(session.summary()),
+                  if (session.gapCount > 0)
+                    Text('⚠ ${session.gapCount} seq gap(s) — dropped frames',
+                        style: const TextStyle(color: Colors.orange)),
+                  if (session.blockers().isNotEmpty)
+                    Text('blockers: ${session.blockers().join(', ')}'),
+                ],
+                const SizedBox(height: 8),
+                const Text(
+                  'Transport note: the watch link (BLE / Communications, docs/00 §4) '
+                  'is not wired yet, so this screen replays a synthetic set to '
+                  'exercise the full frame -> session -> backend path.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ]),
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(_error!, style: const TextStyle(color: Colors.red)),
+            ),
+          if (_result != null) _ResultCard(result: _result!),
+        ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+    );
+  }
+}
+
+class _ResultCard extends StatelessWidget {
+  const _ResultCard({required this.result});
+  final IngestResponse result;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = result.physics;
+    return Card(
+      margin: const EdgeInsets.only(top: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('backend: HTTP ${result.statusCode}',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          if (result.error != null)
+            Text(result.error!, style: const TextStyle(color: Colors.red)),
+          if (p != null) ...[
+            const SizedBox(height: 8),
+            Text('samples: ${result.nSamples}'),
+            Text(p.toString()),
+            Text('reps: ${result.repCount ?? "auto (Phase 5)"}'),
+            if (!p.isPhysicallyPlausible)
+              const Text('⚠ physics outside human range (docs/02 §5)',
+                  style: TextStyle(color: Colors.orange)),
+          ],
+          if (result.warnings.isNotEmpty)
+            Text('warnings: ${result.warnings.join(", ")}'),
+        ]),
+      ),
     );
   }
 }
