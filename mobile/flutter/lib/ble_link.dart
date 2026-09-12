@@ -12,6 +12,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+
 import 'package:flutter_ble_peripheral/flutter_ble_peripheral.dart';
 
 import 'binary_frames.dart';
@@ -74,13 +75,27 @@ class BlePeripheralFrameSource implements FrameSource {
   final FrameAssembler assembler;
 
   final _controller = StreamController<LiftFrame>.broadcast();
+
+  /// Human-readable link events for the app's debug log. The watch cannot show
+  /// us anything (its `System.println` never reaches CIQ_LOG.YML), so anything
+  /// this side observes belongs in front of the user.
+  final StreamController<String> _events = StreamController<String>.broadcast();
+
   StreamSubscription<Uint8List>? _dataSub;
   StreamSubscription<int>? _mtuSub;
+  Timer? _poll;
 
   bool _running = false;
   PeripheralBluetoothState? lastState;
   int? negotiatedMtu;
   String? lastError;
+
+  /// What the PLATFORM reports, polled - not what we assumed at start().
+  /// Android silently stops advertising when the app is not in the foreground,
+  /// so a one-shot flag set in start() can be a lie.
+  bool advertisingNow = false;
+  bool centralConnected = false;
+  int centralConnects = 0;
 
   BlePeripheralFrameSource({
     FlutterBlePeripheral? peripheral,
@@ -90,6 +105,13 @@ class BlePeripheralFrameSource implements FrameSource {
 
   @override
   Stream<LiftFrame> get frames => _controller.stream;
+
+  /// Link events (advertising on/off, central connect/disconnect, MTU, errors).
+  Stream<String> get events => _events.stream;
+
+  void _emitEvent(String msg) {
+    if (!_events.isClosed) _events.add(msg);
+  }
 
   @override
   bool get isRunning => _running;
@@ -125,18 +147,58 @@ class BlePeripheralFrameSource implements FrameSource {
       // other state (denied, turnedOff, unsupported, ...) means it is not.
       _running = state == PeripheralBluetoothState.granted ||
           state == PeripheralBluetoothState.ready;
-      if (!_running) lastError = 'peripheral state: ${state.name}';
+      if (!_running) {
+        lastError = 'peripheral state: ${state.name}';
+        _emitEvent('start FAILED: $lastError');
+      } else {
+        _emitEvent('advertising service=$kLiftServiceUuid rx=$kLiftDataUuid '
+            'name=$kLiftLocalName');
+        _startPolling();
+      }
       return _running;
     } catch (e) {
       // MissingPluginException on desktop/test, PlatformException on a device
       // that refuses advertising, etc.
       lastError = '$e';
       _running = false;
+      _emitEvent('start threw: $e');
       return false;
     }
   }
 
+  /// Poll what the platform actually thinks, and report every transition.
+  void _startPolling() {
+    _poll?.cancel();
+    _poll = Timer.periodic(const Duration(seconds: 3), (_) async {
+      try {
+        final adv = await _peripheral.isAdvertising;
+        final central = await _peripheral.isConnected;
+        if (adv != advertisingNow) {
+          advertisingNow = adv;
+          _emitEvent(adv
+              ? 'advertising: TRUE (platform reports on air)'
+              : 'advertising: FALSE - the platform dropped it '
+                  '(Android stops advertising when the app is backgrounded)');
+        }
+        if (central != centralConnected) {
+          centralConnected = central;
+          if (central) centralConnects++;
+          _emitEvent(central
+              ? 'central CONNECTED (the watch is attached)'
+              : 'central disconnected');
+        }
+      } catch (e) {
+        _emitEvent('poll failed: $e');
+      }
+    });
+  }
+
   void _onFragment(Uint8List bytes) {
+    // First bytes ever received is worth shouting about: it means the watch's
+    // writes are actually reaching us.
+    if (assembler.fragmentsReceived == 1) {
+      _emitEvent('first fragment received (${bytes.length} B) - watch writes land');
+    }
     final frame = assembler.add(bytes);
     if (frame != null && !_controller.isClosed) _controller.add(frame);
   }
@@ -144,6 +206,9 @@ class BlePeripheralFrameSource implements FrameSource {
   @override
   Future<void> stop() async {
     _running = false;
+    advertisingNow = false;
+    _poll?.cancel();
+    _poll = null;
     await _dataSub?.cancel();
     _dataSub = null;
     await _mtuSub?.cancel();

@@ -102,6 +102,9 @@ class LiftBleTransport extends LiftTransport {
     // If we are connected but can never resolve the characteristic, the peer is
     // probably wrong (or its GATT server is not serving our profile): re-scan.
     private const MAX_RESOLVE_TRIES = 40;
+    // Scanning with no results at all for this long means the scan is not really
+    // running (seen after a stale pairing tied up the radio): cycle it.
+    private const SCAN_BLIND_TIMEOUT_MS = 12000;
 
     private var _delegate;
     private var _device;         // from onConnectedStateChanged
@@ -120,6 +123,8 @@ class LiftBleTransport extends LiftTransport {
     private var _pairStartedMs;  // System.getTimer() at the last pairDevice
     private var _lastStatus;
     private var _sawAdvertisers;
+    private var _scanStartedMs;   // when the current scan began
+    private var _scanRestarts;    // blind-scan recoveries
 
     function initialize() {
         LiftTransport.initialize();
@@ -139,6 +144,8 @@ class LiftBleTransport extends LiftTransport {
         _pairStartedMs = 0;
         _lastStatus = 0;
         _sawAdvertisers = 0;
+        _scanStartedMs = 0;
+        _scanRestarts = 0;
     }
 
     // Register the profile the phone will host, then start scanning for it.
@@ -191,6 +198,7 @@ class LiftBleTransport extends LiftTransport {
     function isEncrypted() as Boolean { return _encrypted; }
     function lastWriteStatus() as Number { return _lastStatus; }
     function advertisersSeen() as Number { return _sawAdvertisers; }
+    function scanRestarts() as Number { return _scanRestarts; }
     function deviceName() as String {
         return _device == null ? "" : _device.getName();
     }
@@ -214,14 +222,51 @@ class LiftBleTransport extends LiftTransport {
     private function resumeScanning() as Void {
         _scanning = true;
         _pairStartedMs = 0;
+        _scanStartedMs = System.getTimer();
         BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
+    }
+
+    // A scan that is "on" but yields nothing is a real failure mode: observed on
+    // hardware as adv=99 on the first run and then adv=0 forever afterwards
+    // (consistent with the radio being tied up by a stale pairing made by the
+    // pre-filter build). Cycling scan off/on is the cheap recovery.
+    private function restartScan() as Void {
+        _scanRestarts++;
+        System.println("LiftBle: scan blind for " +
+                       ((System.getTimer() - _scanStartedMs) / 1000) +
+                       "s with adv=" + _sawAdvertisers + "; restarting scan");
+        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+        resumeScanning();
     }
 
     // Called periodically by the controller (see LiftTransport.tick). Without
     // this, a pair attempt that never connected left the transport in `lost`
     // forever, skipping every frame.
     function tick() as Void {
-        if (!_started || _connected) { return; }
+        if (!_started) { return; }
+
+        if (_connected) {
+            // Retry/verify the service+characteristic here rather than only in
+            // emit(), so a bogus pairing is cleaned up while the app is idle.
+            if (_data == null) {
+                resolveCharacteristic();
+                if (_resolveTries > MAX_RESOLVE_TRIES) {
+                    System.println("LiftBle: characteristic never resolved (" +
+                                   _resolveTries + " tries); unpairing + rescanning");
+                    if (_device != null) {
+                        BluetoothLowEnergy.unpairDevice(_device);
+                    }
+                    _device = null;
+                    _pairedDevice = null;
+                    _connected = false;
+                    _service = null;
+                    _data = null;
+                    _resolveTries = 0;
+                    resumeScanning();
+                }
+            }
+            return;
+        }
 
         // Abandon a stalled pair attempt so the watch is not wedged on a device
         // that will never connect.
@@ -238,23 +283,13 @@ class LiftBleTransport extends LiftTransport {
             return;
         }
 
-        // Connected but unusable for too long: the peer is not serving our
-        // profile. Drop it and look again rather than skipping every frame.
-        if (_resolveTries > MAX_RESOLVE_TRIES) {
-            System.println("LiftBle: characteristic never resolved; rescanning");
-            if (_device != null) {
-                BluetoothLowEnergy.unpairDevice(_device);
-            }
-            _device = null;
-            _connected = false;
-            _service = null;
-            _data = null;
-            _resolveTries = 0;
-            resumeScanning();
-            return;
-        }
+        if (!_scanning) { resumeScanning(); return; }
 
-        if (!_scanning) { resumeScanning(); }
+        // Scanning, but nothing is being heard: cycle the scan.
+        if (_sawAdvertisers == 0 &&
+            (System.getTimer() - _scanStartedMs) > SCAN_BLIND_TIMEOUT_MS) {
+            restartScan();
+        }
     }
 
     // ---------------------------------------------------------------- transport
@@ -262,6 +297,7 @@ class LiftBleTransport extends LiftTransport {
     function emit(frame as Dictionary) as Void {
         if (!(Toybox has :BluetoothLowEnergy)) { return; }
         if (_data == null && _connected) {
+            // (tick() also does this while idle; harmless to retry here.)
             // Retry resolution: getService()/getCharacteristic() can return null
             // if GATT discovery had not finished when onConnectedStateChanged
             // fired. Retrying here recovers without a reconnect.

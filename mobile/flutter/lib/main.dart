@@ -151,6 +151,12 @@ class _CompanionPageState extends State<CompanionPage> {
 
   Future<void> _startBle() async {
     final ble = BlePeripheralFrameSource();
+    // Surface everything the link observes into the in-app log: the watch cannot
+    // tell us anything (its System.println never reaches CIQ_LOG.YML).
+    ble.events.listen((msg) {
+      _log.add('ble', msg);
+      if (mounted) setState(() {});
+    });
     setState(() => _ble = ble);
     await _captureFrom(ble, label: 'BLE peripheral');
     if (!ble.isRunning) {
@@ -369,8 +375,11 @@ class _CompanionPageState extends State<CompanionPage> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('link: ${ble == null ? 'not started' : (ble.isRunning ? 'ADVERTISING' : 'stopped')}'
               '${ble?.negotiatedMtu != null ? '  mtu=${ble!.negotiatedMtu}' : ''}'),
+          Text('advertising (platform-reported): ${ble?.advertisingNow ?? false}'
+              '   central connected: ${ble?.centralConnected ?? false}'
+              '${(ble?.centralConnects ?? 0) > 0 ? ' (${ble!.centralConnects}x)' : ''}'),
           Text('state: ${ble?.lastState ?? '-'}   '
-              'central sent data: ${(ble?.assembler.fragmentsReceived ?? 0) > 0 ? 'yes' : 'no data yet'}'),
+              'watch writes seen: ${(ble?.assembler.fragmentsReceived ?? 0) > 0 ? 'yes' : 'NO'}'),
           Text('fragments: ${ble?.assembler.summary() ?? '-'}'),
           Text('buffer: ${_buffer.summary()}'),
           const SizedBox(height: 6),

@@ -78,6 +78,7 @@ class RecordingController {
     function getWriteFails() as Number   { return _transport.writeFails(); }
     function getSkipped() as Number      { return _transport.skipped(); }
     function getAdvertisersSeen() as Number { return _transport.advertisersSeen(); }
+    function getScanRestarts() as Number    { return _transport.scanRestarts(); }
     function getTxStatus() as String     { return _transport.statusLine(); }
 
     // Start polling the accelerometer and move to STATE_IDLE. From App.onStart.

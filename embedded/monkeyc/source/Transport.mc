@@ -66,6 +66,11 @@ class LiftTransport {
     function advertisersSeen() as Number {
         return 0;
     }
+
+    // Times a blind scan (scanning but hearing nothing) was cycled to recover.
+    function scanRestarts() as Number {
+        return 0;
+    }
 }
 
 // Logs the frame. Used for HW checkpoint validation and as a fallback.
@@ -165,5 +170,10 @@ class LiftTeeTransport extends LiftTransport {
     function advertisersSeen() as Number {
         if (_parts.size() == 0) { return 0; }
         return _parts[0].advertisersSeen();
+    }
+
+    function scanRestarts() as Number {
+        if (_parts.size() == 0) { return 0; }
+        return _parts[0].scanRestarts();
     }
 }

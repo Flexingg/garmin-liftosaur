@@ -64,9 +64,11 @@ class LiftView extends WatchUi.View {
                     " adv=" + _controller.getAdvertisersSeen() +
                     " snt=" + _controller.getFramesSent(),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        var restarts = _controller.getScanRestarts();
         dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w/2, h/2 + 74, Graphics.FONT_XTINY,
-                    "skip=" + skipped + " fail=" + fails,
+                    "skip=" + skipped + " fail=" + fails +
+                    (restarts > 0 ? " rst=" + restarts : ""),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var drops = _controller.getDropped();
