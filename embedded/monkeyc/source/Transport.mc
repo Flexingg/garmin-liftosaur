@@ -42,6 +42,18 @@ class LiftTransport {
     function writeFails() as Number {
         return 0;
     }
+
+    // Frames the transport could not send because the link was not ready.
+    // This is the counter that was missing when the watch showed "sent=0" and
+    // "fail=0" with nothing arriving: emit() silently returned.
+    function skipped() as Number {
+        return 0;
+    }
+
+    // Short on-screen description of WHY the link is in its current state.
+    function statusLine() as String {
+        return "n/a";
+    }
 }
 
 // Logs the frame. Used for HW checkpoint validation and as a fallback.
@@ -65,6 +77,10 @@ class LiftLogTransport extends LiftTransport {
 
     function framesSent() as Number {
         return _frames;
+    }
+
+    function statusLine() as String {
+        return "log";
     }
 }
 
@@ -115,5 +131,16 @@ class LiftTeeTransport extends LiftTransport {
     function writeFails() as Number {
         if (_parts.size() == 0) { return 0; }
         return _parts[0].writeFails();
+    }
+
+    function skipped() as Number {
+        if (_parts.size() == 0) { return 0; }
+        return _parts[0].skipped();
+    }
+
+    // The FIRST transport is the real link (BLE); report its state on screen.
+    function statusLine() as String {
+        if (_parts.size() == 0) { return "none"; }
+        return _parts[0].statusLine();
     }
 }

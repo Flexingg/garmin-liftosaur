@@ -33,6 +33,10 @@ enum LiftState {
 // before the BLE/HTTP decision (docs/00 §4) is settled.
 // ---------------------------------------------------------------------------
 
+// Prompt before writing the activity to Garmin Connect. Set false to save
+// automatically again (the pre-debug behaviour).
+const PROMPT_SAVE_ON_STOP = true;
+
 class RecordingController {
 
     private var _state;
@@ -72,6 +76,8 @@ class RecordingController {
     function getTransportName() as String { return _transport.name(); }
     function getFramesSent() as Number   { return _transport.framesSent(); }
     function getWriteFails() as Number   { return _transport.writeFails(); }
+    function getSkipped() as Number      { return _transport.skipped(); }
+    function getTxStatus() as String     { return _transport.statusLine(); }
 
     // Start polling the accelerometer and move to STATE_IDLE. From App.onStart.
     function start() as Void {
@@ -102,6 +108,22 @@ class RecordingController {
         _state = STATE_INIT;
     }
 
+    // Resolve the open FIT session after the save prompt. Called by the
+    // Confirmation dialog's delegate. `save` false discards the recording, so a
+    // debug run leaves nothing behind in Garmin Connect.
+    function finishSet(save as Boolean) as Void {
+        if (_session == null) { return; }
+        if (save) {
+            _session.save();
+            System.println("== SESSION SAVED ==");
+        } else {
+            _session.discard();
+            System.println("== SESSION DISCARDED ==");
+        }
+        _session = null;
+        WatchUi.requestUpdate();
+    }
+
     // Hardware Start/Stop button toggle.
     function onToggle() as Void {
         if (_state == STATE_IDLE || _state == STATE_STOPPED) {
@@ -119,9 +141,14 @@ class RecordingController {
         _chunksSent = 0;
 
         if (Toybox has :ActivityRecording) {
+            // Save this as a STRENGTH WORKOUT, not a generic activity.
+            // NOTE: SPORT_STRENGTH_TRAINING does NOT exist on the Venu 2S runtime
+            // (it is in the SDK union API only) - strength is expressed as the
+            // SPORT_TRAINING + SUB_SPORT_STRENGTH_TRAINING pair instead.
             _session = ActivityRecording.createSession({
-                :name  => "Liftosaur",
-                :sport => Activity.SPORT_GENERIC
+                :name     => "Liftosaur",
+                :sport    => Activity.SPORT_TRAINING,
+                :subSport => Activity.SUB_SPORT_STRENGTH_TRAINING
             });
             _session.start();
         }
@@ -146,16 +173,26 @@ class RecordingController {
         _emit(LiftFrame.setEnd(_seq, _exerciseId, _rateHzInt(), durationMs, 0));
 
         if ((Toybox has :ActivityRecording) && (_session != null)) {
+            // Stop, but do NOT save yet: the set is complete, the FIT session is
+            // kept open until the user answers the save prompt. Handy while
+            // debugging, since every test run otherwise lands in Garmin Connect.
             _session.stop();
-            _session.save();
-            _session = null;
         }
 
         _state = STATE_STOPPED;
         WatchUi.requestUpdate();
         System.println("== RECORDING STOP == duration_ms=" + durationMs +
-                       " chunks=" + _chunksSent + " dropped=" + _buffer.dropped());
+                       " chunks=" + _chunksSent + " dropped=" + _buffer.dropped() +
+                       " txSkipped=" + _transport.skipped());
         _buffer.logSummary();
+
+        if (PROMPT_SAVE_ON_STOP && (_session != null)) {
+            WatchUi.pushView(new WatchUi.Confirmation("Save workout?"),
+                             new LiftSaveDelegate(self),
+                             WatchUi.SLIDE_UP);
+        } else {
+            finishSet(PROMPT_SAVE_ON_STOP);
+        }
     }
 
     // Timer tick: read the latest accelerometer sample. Buffer only while recording.
@@ -201,5 +238,24 @@ class RecordingController {
     private function _elapsedMs() as Long {
         if (_startMs == 0) { return 0l; }
         return System.getTimer() - _startMs;
+    }
+}
+
+// Yes/No dialog shown when a set stops: writes the FIT recording ("yes") or
+// throws it away ("no"). Debugging makes a lot of throwaway activities.
+class LiftSaveDelegate extends WatchUi.ConfirmationDelegate {
+
+    private var _controller;
+
+    function initialize(controller as RecordingController) {
+        WatchUi.ConfirmationDelegate.initialize();
+        _controller = controller;
+    }
+
+    // Parameter type is WatchUi.Confirm (the enum type), not WatchUi.Confirmation
+    // - the compiler rejects the wrong one with "Cannot override parameter 1".
+    function onResponse(response as WatchUi.Confirm) as Boolean {
+        _controller.finishSet(response == WatchUi.CONFIRM_YES);
+        return true;
     }
 }

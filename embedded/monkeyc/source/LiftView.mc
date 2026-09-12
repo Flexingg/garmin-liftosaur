@@ -51,15 +51,25 @@ class LiftView extends WatchUi.View {
                     " pend=" + _controller.getPending(),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        var drops = _controller.getDropped();
+        // Link diagnostics. Previously a "sent=0 / fail=0" screen was a dead end
+        // because nothing distinguished "not connected" from "connected but the
+        // characteristic was never found". Show the reason and the skip count.
+        var skipped = _controller.getSkipped();
         var fails = _controller.getWriteFails();
-        dc.setColor((drops > 0 || fails > 0) ? Graphics.COLOR_ORANGE
-                                             : Graphics.COLOR_DK_GRAY,
+        var trouble = fails > 0 || skipped > 0;
+        dc.setColor(trouble ? Graphics.COLOR_ORANGE : Graphics.COLOR_DK_GRAY,
                     Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w/2, h/2 + 65, Graphics.FONT_XTINY,
-                    _controller.getTransportName() + " sent=" +
-                    _controller.getFramesSent() + " drop=" + drops +
-                    " fail=" + fails,
+        dc.drawText(w/2, h/2 + 58, Graphics.FONT_XTINY,
+                    "ble:" + _controller.getTxStatus() +
+                    "  snt=" + _controller.getFramesSent() +
+                    " skip=" + skipped + " fail=" + fails,
+                    Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+
+        var drops = _controller.getDropped();
+        dc.setColor(drops > 0 ? Graphics.COLOR_ORANGE : Graphics.COLOR_DK_GRAY,
+                    Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w/2, h/2 + 80, Graphics.FONT_XTINY,
+                    "buf_drop=" + drops + " pend=" + _controller.getPending(),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 }

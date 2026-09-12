@@ -158,6 +158,47 @@ Also confirm the phone is not already at its limit of BLE peripheral connections
 the watch keeps its normal link to Garmin Connect Mobile at the same time, and a
 phone peripheral cannot always serve both.
 
+## 5b. Diagnosing a link that sends nothing  *(this is the current state)*
+
+Symptom seen on hardware: the watch paired (a 6-digit passkey appeared), the watch
+screen showed `sent=0`, `fail=0`, and the phone received nothing — with **no error
+in `CIQ_LOG.YML` at all**.
+
+Two reasons that was a dead end, both now fixed:
+
+1. **`System.println` never reaches `CIQ_LOG.YML`.** That file only records crashes.
+   Every `System.println("LiftBle: ...")` we wrote is invisible on a physical watch
+   unless the Connect IQ developer console is attached. Do not rely on it for field
+   diagnosis.
+2. **`emit()` returned silently** when the link was not ready, so a "connected but
+   the characteristic was never resolved" state looked identical to "not connected":
+   nothing sent, nothing counted.
+
+What to look at now, in order:
+
+- **The watch screen** names the link state directly:
+  `off` → `scan` → `paired` → `no-svc` → `no-char` → `ready`, plus
+  `snt=` / `skip=` / `fail=`.
+  `no-svc` or `no-char` with `skip` climbing pinpoints it exactly: the watch
+  connected but could not resolve our service/characteristic on the phone.
+  Resolution is also **retried** on every frame, so a slow GATT discovery recovers
+  by itself rather than needing a reconnect.
+- **The phone's Debug tab** logs everything it observes (advertising state, MTU,
+  fragment/frame/decode counters, each frame) and can drive the link by hand
+  (`Start advertising`, `Stop`, `Inject test frame`, `Clear`). `Inject test frame`
+  pushes a synthetic frame through the identical decode → chart → session → upload
+  path, so everything downstream of the radio can be verified with no watch.
+- **Independent check, no app involved:** install **nRF Connect** and scan. You
+  should see the advertised name `Liftosaur` with service `4c494654-0001-…` and,
+  after connecting, a characteristic `4c494654-0002-…`. If you instead see the
+  Nordic UART UUIDs (`6e400001-…`), then `flutter_ble_peripheral` did not apply the
+  custom `GattServerSettings` and the watch is looking for a service that is not
+  being served — which would explain everything.
+
+`GET /health` returning 404 in the backend log is a related trap: a base URL
+without `/api/v1` silently produced requests to `/health` and `/sets`. The app now
+normalises whatever you type (`BackendClient.normalizeBase`).
+
 ## 6. Android permissions
 
 `android/app/src/main/AndroidManifest.xml` declares `BLUETOOTH_ADVERTISE`,

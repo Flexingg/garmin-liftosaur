@@ -100,6 +100,28 @@ class BackendClient {
         client: client,
       );
 
+  /// Accept what a human types and make it a usable base URL.
+  ///
+  /// Real case this fixes: the field was set to `http://192.168.1.146:8008`
+  /// (no path), so the client requested `/health` and `/sets` and the backend
+  /// answered 404 — with nothing in the app explaining why uploads vanished.
+  /// A missing scheme also gets `http://`, and a missing `/api/v1` is appended.
+  static Uri normalizeBase(String input) {
+    var s = input.trim();
+    if (s.isEmpty) return Uri.parse('http://127.0.0.1:8008/api/v1');
+    if (!s.contains('://')) s = 'http://$s';
+    var uri = Uri.parse(s);
+    final path = uri.path.replaceAll(RegExp(r'/+$'), '');
+    if (path.isEmpty) {
+      return uri.replace(path: '/api/v1');
+    }
+    if (!path.endsWith('/api/v1')) {
+      return uri.replace(path: '$path/api/v1');
+    }
+    // Already correct: only drop the trailing slash.
+    return path == uri.path ? uri : uri.replace(path: path);
+  }
+
   Uri _endpoint(String path) => baseUrl.replace(
         path: '${baseUrl.path.replaceAll(RegExp(r'/+$'), '')}$path',
       );

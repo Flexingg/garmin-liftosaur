@@ -125,6 +125,15 @@ on purpose — the phone reaches it over the LAN, and the app's default backend 
 Hardware checkpoints require human action (sideload `.prg`, run the app on the physical
 phone/watch) — the phases are gated on those validations.
 
+## Debugging the watch link
+
+The watch's `System.println` output does **not** reach `CIQ_LOG.YML` (that file only
+records crashes), so the phone app carries the diagnostics: a **Debug tab** with a
+live event log, link/MTU/fragment counters, manual `Start advertising` / `Stop`, and
+`Inject test frame` (drives the decode → chart → session → upload path with no watch
+involved). The watch screen itself reports `ble:<state>` (`off`/`scan`/`paired`/
+`no-svc`/`no-char`/`ready`) plus `snt`/`skip`/`fail`. See `docs/04` §5b.
+
 ## Tests
 
 ```bash

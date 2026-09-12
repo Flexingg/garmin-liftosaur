@@ -95,6 +95,9 @@ class LiftBleTransport extends LiftTransport {
     private var _fragmentsSent;
     private var _writeFails;
     private var _lastStatus;
+    private var _skipped;      // frames dropped because the link was not ready
+    private var _resolveTries; // characteristic resolution attempts
+    private var _started;      // start() has run
 
     function initialize() {
         LiftTransport.initialize();
@@ -108,6 +111,9 @@ class LiftBleTransport extends LiftTransport {
         _fragmentsSent = 0;
         _writeFails = 0;
         _lastStatus = 0;
+        _skipped = 0;
+        _resolveTries = 0;
+        _started = false;
     }
 
     // Register the profile the phone will host, then start scanning for it.
@@ -137,6 +143,7 @@ class LiftBleTransport extends LiftTransport {
             }]
         });
 
+        _started = true;
         _scanning = true;
         BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
         System.println("LiftBle: scanning for the phone's GATT server");
@@ -159,6 +166,21 @@ class LiftBleTransport extends LiftTransport {
 
     function framesSent() as Number { return _framesSent; }
     function writeFails() as Number { return _writeFails; }
+    function skipped() as Number { return _skipped; }
+    function fragmentsSent() as Number { return _fragmentsSent; }
+
+    // Compact on-screen state so the watch itself explains the link:
+    //   off | scan | paired | no-svc | no-char | ready | lost
+    function statusLine() as String {
+        if (!_started) { return "off"; }
+        if (_connected) {
+            if (_service == null) { return "no-svc"; }
+            if (_data == null) { return "no-char"; }
+            return "ready";
+        }
+        if (_scanning) { return "scan"; }
+        return "lost";
+    }
     function isConnected() as Boolean { return _connected; }
     function isEncrypted() as Boolean { return _encrypted; }
     function lastWriteStatus() as Number { return _lastStatus; }
@@ -171,9 +193,15 @@ class LiftBleTransport extends LiftTransport {
     function emit(frame as Dictionary) as Void {
         if (!(Toybox has :BluetoothLowEnergy)) { return; }
         if (_data == null) {
-            // Not connected yet: nothing to do but report it. The caller keeps
-            // buffering (SampleBuffer counts drops), so a late connection still
-            // streams rather than silently losing the set.
+            // Retry resolution: getService()/getCharacteristic() can return null
+            // if GATT discovery had not finished when onConnectedStateChanged
+            // fired. Retrying here recovers without a reconnect.
+            if (_connected) { resolveCharacteristic(); }
+        }
+        if (_data == null) {
+            // Still nothing to write to. COUNT it - a silent return here is what
+            // made "sent=0, fail=0" impossible to diagnose on the watch.
+            _skipped++;
             _lastStatus = -1;
             return;
         }
@@ -192,6 +220,20 @@ class LiftBleTransport extends LiftTransport {
     }
 
     // ---------------------------------------------------------------- callbacks
+
+    // Look up our service + characteristic on the connected device. Safe to call
+    // repeatedly: it is retried from emit() while the link is not ready, because
+    // GATT discovery may not have completed when the connect callback fired.
+    function resolveCharacteristic() as Void {
+        _resolveTries++;
+        if (_device == null) { return; }
+        if (_service == null) {
+            _service = _device.getService(LiftBle.serviceUuid());
+        }
+        if (_service != null && _data == null) {
+            _data = _service.getCharacteristic(LiftBle.dataUuid());
+        }
+    }
 
     function handleScanResults(results as BluetoothLowEnergy.Iterator) as Void {
         var r = results.next();
@@ -229,11 +271,10 @@ class LiftBleTransport extends LiftTransport {
         if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
             _device = device;
             _connected = true;
-            _service = device.getService(LiftBle.serviceUuid());
-            if (_service != null) {
-                _data = _service.getCharacteristic(LiftBle.dataUuid());
-            }
-            System.println("LiftBle: connected; characteristic=" +
+            resolveCharacteristic();
+            System.println("LiftBle: connected; service=" +
+                           (_service == null ? "NOT FOUND" : "ok") +
+                           " characteristic=" +
                            (_data == null ? "NOT FOUND" : "ok"));
         } else {
             _connected = false;
