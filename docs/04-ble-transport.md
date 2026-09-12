@@ -133,12 +133,30 @@ BLE link misbehaves.
 
 ## 5. Pairing / bonding caveat  *(unverified)*
 
-The transport sets `CONNECTION_STRATEGY_DEFAULT`, so the RX characteristic is open
-and no bonding prompt is expected. If the watch refuses to pair, switch to
-`CONNECTION_STRATEGY_SECURE_PAIR_BOND`, which will surface a passkey on both
-devices. Also confirm the phone is not already at its limit of BLE peripheral
-connections — the watch keeps its normal link to Garmin Connect Mobile at the same
-time, and a phone peripheral cannot always serve both.
+The connection strategy is left at the platform default (non-secure, so the RX
+characteristic is open and no bonding prompt is expected).
+
+**`setConnectionStrategy` is NOT callable on the Venu 2S.** It appears in the SDK
+9.2.0 API reference, but the watch's runtime (firmware 19.05 / **CIQ 6.0.2**) does
+not expose it, and Monkey C compiles the call anyway. The failure is a runtime
+crash on app start:
+
+```
+Error: Symbol Not Found Error
+Details: "Could not find symbol 'setConnectionStrategy'"
+Filename: Liftosaur / Appname: Liftosaur
+  LiftBleTransport.mc line 124, start
+```
+
+So there is no way to opt into `CONNECTION_STRATEGY_SECURE_PAIR_BOND` on this
+device — if a securing requirement ever appears, it has to come from the
+characteristic's own permissions instead. Verify any candidate API against the
+device's own file (`~/.Garmin/ConnectIQ/Devices/<device>/<device>.api.debug.xml`)
+or, better, let `tools/check-device-api.py` do it (it now runs as part of the build).
+
+Also confirm the phone is not already at its limit of BLE peripheral connections —
+the watch keeps its normal link to Garmin Connect Mobile at the same time, and a
+phone peripheral cannot always serve both.
 
 ## 6. Android permissions
 

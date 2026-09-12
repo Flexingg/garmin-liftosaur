@@ -102,6 +102,26 @@ echo "Built bin/Liftosaur.prg ($(stat -c%s bin/Liftosaur.prg) bytes) target=${TA
 if [ -n "$TARGET" ] && [ "$TARGET" != "006-B3704-00 " ] && [ "$DEVICE" = "venu2s" ]; then
   echo "WARNING: expected 006-B3704-00 (Venu 2S) but artifact reports: $TARGET" >&2
 fi
+
+# ---------------------------------------------------------------------------
+# 4. Reject calls to Toybox symbols this DEVICE does not expose.
+#
+#    monkeyc compiles against the SDK's union API, so it will happily build a
+#    call to a function the watch's firmware lacks. That only surfaces on
+#    hardware as `Symbol Not Found Error` at runtime (it cost a hardware cycle
+#    to find setConnectionStrategy this way). BluetoothLowEnergy is strict
+#    because a crash there happens on app start.
+# ---------------------------------------------------------------------------
+echo
+if ! python3 tools/check-device-api.py --device "$DEVICE" --source-dir source \
+        --strict-module BluetoothLowEnergy; then
+  echo >&2
+  echo "ERROR: the build succeeded but the device cannot resolve a symbol above." >&2
+  echo "       Sideloading this .prg would crash at runtime. Fix the call (or" >&2
+  echo "       feature-detect it) before installing." >&2
+  exit 1
+fi
+
 echo
 echo "Sideload:  copy bin/Liftosaur.prg to GARMIN/APPS over MTP, then PHYSICALLY"
 echo "           UNPLUG the watch (that is when it installs). See"

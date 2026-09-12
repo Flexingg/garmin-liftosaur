@@ -111,9 +111,16 @@ class LiftBleTransport extends LiftTransport {
     }
 
     // Register the profile the phone will host, then start scanning for it.
-    // Default (non-secure) connection strategy: an open RX characteristic means
-    // no bonding prompt, which keeps the dev loop simple. Switch to
-    // CONNECTION_STRATEGY_SECURE_PAIR_BOND for a real deployment.
+    //
+    // NOTE: do NOT call BluetoothLowEnergy.setConnectionStrategy() here. It is
+    // in the SDK 9.2.0 API but is NOT present on the Venu 2S runtime (firmware
+    // 19.05 / CIQ 6.0.2), and Monkey C does not reject it at build time - it
+    // throws at runtime, on app start:
+    //     Error: Symbol Not Found Error
+    //     Details: "Could not find symbol 'setConnectionStrategy'"
+    // The default strategy applies anyway (non-secure, no bonding prompt). If
+    // bonding is ever needed, feature-detect before use - see
+    // tools/check-device-api.py, which now guards this whole class of bug.
     function start() as Void {
         if (!(Toybox has :BluetoothLowEnergy)) {
             System.println("LiftBle: no BluetoothLowEnergy on this device");
@@ -121,8 +128,6 @@ class LiftBleTransport extends LiftTransport {
         }
         _delegate = new LiftBleDelegate(self);
         BluetoothLowEnergy.setDelegate(_delegate);
-        BluetoothLowEnergy.setConnectionStrategy(
-            BluetoothLowEnergy.CONNECTION_STRATEGY_DEFAULT);
 
         BluetoothLowEnergy.registerProfile({
             :uuid => LiftBle.serviceUuid(),
