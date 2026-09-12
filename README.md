@@ -34,6 +34,20 @@ kinematic physics and machine-learning rep detection.
   peripheral and the watch is the central, the UUIDs, the binary wire format,
   fragmentation, and what is/isn't verified.
 
+## Download & install (no build required)
+
+Both artifacts are side-loads. Nothing here needs the source tree or a toolchain.
+
+| Artifact | Where | Install |
+|---|---|---|
+| **Watch app** — `Liftosaur.prg` (signed, Venu 2 / 2S, product `006-B3704-00`) | [`dist/Liftosaur.prg`](dist/Liftosaur.prg) — committed to this repo | Copy into `GARMIN/APPS` over MTP, then **physically unplug the watch** (installing happens on unplug, not software eject). |
+| **Phone app** — `app-release.apk` (Android, Flutter) | **[Latest GitHub release](https://github.com/Flexingg/garmin-liftosaur/releases/latest)** | Allow "install unknown apps" for your file manager, then open the APK. |
+
+Verify the watch artifact if you like:
+```bash
+sha256sum -c dist/Liftosaur.prg.sha256
+```
+
 ## Watch app: build & install (verified on hardware)
 
 ```bash

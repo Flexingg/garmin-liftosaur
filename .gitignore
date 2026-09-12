@@ -8,6 +8,10 @@ embedded/monkeyc/bin/
 *.prg
 *.iq
 
+# ...EXCEPT the signed release artifacts we hand out (see README → Download)
+!dist/*.prg
+!dist/*.sha256
+
 # Developer signing keys — NEVER commit
 embedded/monkeyc/developer_key.*
 embedded/monkeyc/devkey.pem
@@ -15,6 +19,7 @@ embedded/monkeyc/devkey.pem
 
 # Flutter / Dart
 mobile/flutter/build/
+mobile/flutter/android/build/
 mobile/flutter/.dart_tool/
 mobile/flutter/.flutter-plugins
 mobile/flutter/.flutter-plugins-dependencies
