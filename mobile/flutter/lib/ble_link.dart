@@ -97,6 +97,10 @@ class BlePeripheralFrameSource implements FrameSource {
   bool centralConnected = false;
   int centralConnects = 0;
 
+  /// How many times the platform dropped our advertisement and we put it back.
+  int advertisingRecoveries = 0;
+  static const int _maxAdvertisingRecoveries = 5;
+
   BlePeripheralFrameSource({
     FlutterBlePeripheral? peripheral,
     FrameAssembler? assembler,
@@ -175,10 +179,42 @@ class BlePeripheralFrameSource implements FrameSource {
         final central = await _peripheral.isConnected;
         if (adv != advertisingNow) {
           advertisingNow = adv;
-          _emitEvent(adv
-              ? 'advertising: TRUE (platform reports on air)'
-              : 'advertising: FALSE - the platform dropped it '
-                  '(Android stops advertising when the app is backgrounded)');
+          if (adv) {
+            _emitEvent('advertising: TRUE (platform reports on air)');
+          } else {
+            _emitEvent('advertising: FALSE - the platform dropped it '
+                '(Android stops advertising when the app is not in the '
+                'foreground; screen off does it too)');
+            // Put it back. Without this the app happily showed "ADVERTISING"
+            // while nothing was on air, and the watch sat at adv=0 forever.
+            if (_running && advertisingRecoveries < _maxAdvertisingRecoveries) {
+              advertisingRecoveries++;
+              _emitEvent('re-advertising (attempt $advertisingRecoveries/'
+                  '$_maxAdvertisingRecoveries)');
+              try {
+                await _peripheral.start(
+                  advertiseData: const AdvertiseDataCore(
+                    serviceUuid: kLiftServiceUuid,
+                    localName: kLiftLocalName,
+                  ),
+                  gattServer: const GattServerSettings(
+                    serviceUuid: kLiftServiceUuid,
+                    rxCharacteristicUuid: kLiftDataUuid,
+                  ),
+                );
+                final again = await _peripheral.isAdvertising;
+                advertisingNow = again;
+                _emitEvent(again
+                    ? 're-advertising: TRUE'
+                    : 're-advertising FAILED - keep the app in the foreground');
+              } catch (e) {
+                _emitEvent('re-advertising threw: $e');
+              }
+            } else if (_running) {
+              _emitEvent('advertising keeps dropping; not retrying further '
+                  '(keep the app open, screen on)');
+            }
+          }
         }
         if (central != centralConnected) {
           centralConnected = central;

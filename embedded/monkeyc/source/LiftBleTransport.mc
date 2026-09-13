@@ -106,8 +106,13 @@ class LiftBleTransport extends LiftTransport {
     // probably wrong (or its GATT server is not serving our profile): re-scan.
     private const MAX_RESOLVE_TRIES = 40;
     // Scanning with no results at all for this long means the scan is not really
-    // running (seen after a stale pairing tied up the radio): cycle it.
+    // running. Cycling it helps occasionally, but doing it every 12s forever is
+    // its own thrash loop (observed as rst climbing past 10), so the interval
+    // backs off and then stops: after SCAN_BLIND_MAX_RESTARTS the app just keeps
+    // listening and says so on screen.
     private const SCAN_BLIND_TIMEOUT_MS = 12000;
+    private const SCAN_BLIND_MAX_RESTARTS = 3;
+    private const SCAN_BLIND_MAX_BACKOFF_MS = 120000;
 
     private var _delegate;
     private var _device;         // from onConnectedStateChanged
@@ -130,6 +135,8 @@ class LiftBleTransport extends LiftTransport {
     private var _scanRestarts;    // blind-scan recoveries
     private var _pairAttempts;    // how many times we have paired
     private var _lastResolveMs;   // throttle for getService retries
+    private var _advAtScanStart;  // advertisement count when the scan began
+    private var _blindGivenUp;    // stop cycling; keep listening
 
     function initialize() {
         LiftTransport.initialize();
@@ -153,6 +160,8 @@ class LiftBleTransport extends LiftTransport {
         _scanRestarts = 0;
         _pairAttempts = 0;
         _lastResolveMs = 0;
+        _advAtScanStart = 0;
+        _blindGivenUp = false;
     }
 
     // Register the profile the phone will host, then start scanning for it.
@@ -207,6 +216,7 @@ class LiftBleTransport extends LiftTransport {
     function advertisersSeen() as Number { return _sawAdvertisers; }
     function scanRestarts() as Number { return _scanRestarts; }
     function pairAttempts() as Number { return _pairAttempts; }
+    function isBlind() as Boolean { return _blindGivenUp; }
     function deviceName() as String {
         return _device == null ? "" : _device.getName();
     }
@@ -221,7 +231,7 @@ class LiftBleTransport extends LiftTransport {
             return "no-char";
         }
         if (_connected) { return "conn?"; }
-        if (_scanning) { return "scan"; }
+        if (_scanning) { return _blindGivenUp ? "blind" : "scan"; }
         return "lost";
     }
 
@@ -231,6 +241,7 @@ class LiftBleTransport extends LiftTransport {
         _scanning = true;
         _pairStartedMs = 0;
         _scanStartedMs = System.getTimer();
+        _advAtScanStart = _sawAdvertisers;   // "new since this scan" baseline
         BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
     }
 
@@ -242,9 +253,21 @@ class LiftBleTransport extends LiftTransport {
         _scanRestarts++;
         System.println("LiftBle: scan blind for " +
                        ((System.getTimer() - _scanStartedMs) / 1000) +
-                       "s with adv=" + _sawAdvertisers + "; restarting scan");
+                       "s (adv=" + _sawAdvertisers + "); cycling scan " +
+                       _scanRestarts + "/" + SCAN_BLIND_MAX_RESTARTS);
         BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
         resumeScanning();
+    }
+
+    // Wait this long with no NEW advertisements before cycling the scan again.
+    // Backs off so we do not hammer the radio, and gives up after a few tries.
+    private function blindTimeoutMs() as Number {
+        var t = SCAN_BLIND_TIMEOUT_MS;
+        for (var i = 0; i < _scanRestarts; i++) {
+            t = t * 2;
+            if (t > SCAN_BLIND_MAX_BACKOFF_MS) { return SCAN_BLIND_MAX_BACKOFF_MS; }
+        }
+        return t;
     }
 
     // Called periodically by the controller (see LiftTransport.tick). Without
@@ -301,10 +324,18 @@ class LiftBleTransport extends LiftTransport {
 
         if (!_scanning) { resumeScanning(); return; }
 
-        // Scanning, but nothing is being heard: cycle the scan.
-        if (_sawAdvertisers == 0 &&
-            (System.getTimer() - _scanStartedMs) > SCAN_BLIND_TIMEOUT_MS) {
-            restartScan();
+        // Scanning, but nothing has been heard since this scan started.
+        var heardNothing = (_sawAdvertisers <= _advAtScanStart);
+        if (heardNothing && (System.getTimer() - _scanStartedMs) > blindTimeoutMs()) {
+            if (_scanRestarts < SCAN_BLIND_MAX_RESTARTS) {
+                restartScan();
+            } else if (!_blindGivenUp) {
+                // Stop cycling - repeatedly toggling the scan can keep it from
+                // ever settling. Say so instead and just keep listening.
+                _blindGivenUp = true;
+                System.println("LiftBle: scan is deaf and cycling did not help; " +
+                               "listening passively (reboot the watch)");
+            }
         }
     }
 
