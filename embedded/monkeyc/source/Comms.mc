@@ -202,9 +202,13 @@ class LiftComms {
         if (responseCode >= 200 and responseCode < 300) {
             _posted = true;
             Application.Storage.deleteValue(PENDING_KEY);
+            _controller.setSyncNote("synced to Liftosaur");
             System.println("Comms: workout recorded (" + responseCode + ")");
+            WatchUi.requestUpdate();
             return;
         }
+        _controller.setSyncNote("sync failed " + responseCode + " - will retry");
+        WatchUi.requestUpdate();
         // Keep it: retried on the next launch.
         System.println("Comms: workout post FAILED (" + responseCode + "), stashing");
         stashPending();

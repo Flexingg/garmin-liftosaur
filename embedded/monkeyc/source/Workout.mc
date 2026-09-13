@@ -54,6 +54,7 @@ class WorkoutController {
     private var _awaitingReps;          // the AMRAP "how many did you get?" step
     private var _repsEditing;
     private var _activityNote;          // what happened to the Garmin activity
+    private var _syncNote;              // what happened to the Liftosaur upload
     private var _lapsAdded;
     private var _sessionStopped;
     private var _info;                  // last fetched exercise history
@@ -93,6 +94,7 @@ class WorkoutController {
         _awaitingReps = false;
         _repsEditing = false;
         _activityNote = "";
+        _syncNote = "";
         _lapsAdded = 0;
         _info = null;
         _sessionStopped = false;
@@ -414,6 +416,62 @@ class WorkoutController {
         WatchUi.requestUpdate();
     }
 
+    // Every SET of the day, flattened, so the list can be per-set rather than
+    // per-exercise: "Squat 220 x 5" is what you actually need to find.
+    function setCount() as Number {
+        var n = 0;
+        var exs = currentExercises();
+        for (var i = 0; i < exs.size(); i++) {
+            n += ((exs[i] as Dictionary)[:sets] as Array).size();
+        }
+        return n;
+    }
+
+    // Flat index over every set: [exercise index, set index]
+    private function setRefAt(flat as Number) as Array {
+        var exs = currentExercises();
+        var k = 0;
+        for (var i = 0; i < exs.size(); i++) {
+            var sn = ((exs[i] as Dictionary)[:sets] as Array).size();
+            if (flat < k + sn) { return [i, flat - k]; }
+            k += sn;
+        }
+        return [0, 0];
+    }
+
+    function setLabelAt(flat as Number) as String {
+        var ref = setRefAt(flat);
+        var ei = ref[0] as Number;
+        var si = ref[1] as Number;
+        var exs = currentExercises();
+        if (ei >= exs.size()) { return "-"; }
+        var name = (exs[ei] as Dictionary)[:name] as String;
+        var reps = _reps[ei][si] as Number;
+        var amrap = (((exs[ei] as Dictionary)[:sets] as Array)[si] as Dictionary)[:amrap] as Boolean;
+        return name + "  " + (_weights[ei][si] as Number) + " x " + reps +
+               (amrap ? "+" : "");
+    }
+
+    function setSublabelAt(flat as Number) as String {
+        var ref = setRefAt(flat);
+        var ei = ref[0] as Number;
+        var si = ref[1] as Number;
+        var exs = currentExercises();
+        var sn = ((exs[ei] as Dictionary)[:sets] as Array).size();
+        var mark = isLogged(ei, si) ? "done" : "todo";
+        if (ei == _exIndex and si == _setIndex) { mark += "  now"; }
+        return "set " + (si + 1) + " of " + sn + "   " + mark;
+    }
+
+    function jumpToSet(flat as Number) as Void {
+        var ref = setRefAt(flat);
+        _exIndex = ref[0] as Number;
+        _setIndex = ref[1] as Number;
+        _awaitingReps = false;
+        save();
+        WatchUi.requestUpdate();
+    }
+
     // ---- exercise info (previous session, from the backend) ----
     function setExerciseInfo(dict as Dictionary or Null) as Void { _info = dict; }
 
@@ -510,6 +568,20 @@ class WorkoutController {
         return "top " + ((last as Dictionary)["top_weight"] as Number) + " lb";
     }
 
+    function infoVolumeText() as String {
+        if (_info == null) { return ""; }
+        var last = _info["last"];
+        if (!(last instanceof Dictionary)) { return ""; }
+        var sets = (last as Dictionary)["sets"];
+        if (!(sets instanceof Array)) { return ""; }
+        var vol = 0;
+        for (var i = 0; i < (sets as Array).size(); i++) {
+            var st = (sets as Array)[i] as Dictionary;
+            vol += (st["weight"] as Number) * (st["reps"] as Number);
+        }
+        return "volume " + vol + " lb";
+    }
+
     function infoE1rmText() as String {
         if (_info == null) { return ""; }
         var last = _info["last"];
@@ -547,6 +619,18 @@ class WorkoutController {
 
     // The compact payload to POST (live session, or a stashed retry).
     function outgoingPayload() as String or Null { return pendingText(); }
+
+    // "Next set": logs the current set if it has not been logged yet (the
+    // natural meaning of done-and-on), otherwise just advances.
+    function advance() as Void {
+        if (isFinished()) { finishWorkout(); return; }
+        if (isLogged(_exIndex, _setIndex)) { stepForward(); }
+        else { completeSet(); }
+    }
+
+    // Which field the edit screen's swipes are changing.
+    function adjustFieldIsWeight() as Boolean { return !_repsEditing; }
+    function toggleAdjustField() as Void { _repsEditing = !_repsEditing; }
 
     function canGoBack() as Boolean {
         return (_setIndex > 0) or (_exIndex > 0);
@@ -823,6 +907,11 @@ class WorkoutController {
         for (var i = 0; i < exs.size(); i++) {
             var name = (exs[i] as Dictionary)[:name] as String;
             var planSets = (exs[i] as Dictionary)[:sets] as Array;
+            // Defensive: _weights/_reps are sized by the plan that was active
+            // when the workout began. A restored session or a swapped plan can
+            // leave them shorter, and indexing blindly crashed the save.
+            if (i >= _weights.size() or i >= _reps.size()) { continue; }
+            if (planSets.size() > (_weights[i] as Array).size()) { continue; }
             for (var j = 0; j < planSets.size(); j++) {
                 if (!isLogged(i, j)) { continue; }
                 sets.add({
@@ -958,6 +1047,8 @@ class WorkoutController {
     // Reported on the finish screen: the user could not tell whether the
     // activity reached Garmin Connect, so say so plainly.
     function activityNote() as String { return _activityNote; }
+    function syncNote() as String { return _syncNote; }
+    function setSyncNote(t as String) as Void { _syncNote = t; }
     function lapsAdded() as Number { return _lapsAdded; }
 
     function elapsedMs() as Number {
