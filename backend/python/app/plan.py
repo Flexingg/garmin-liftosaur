@@ -26,7 +26,7 @@ CONFIG_FALLBACK = "/home/hermes/.hermes/config.yaml"
 
 # Plan cache: the watch asks at the start of every workout, and the program only
 # changes when the user edits it, so don't hit Liftosaur on every request.
-_CACHE: dict[str, object] = {"at": 0.0, "plan": None}
+_CACHE: dict[str, object] = {}   # program_id -> (at, plan)
 CACHE_TTL_S = 600
 
 
@@ -265,8 +265,14 @@ def _rm1_map() -> dict[str, float]:
     return out
 
 
-def build_from_liftosaur() -> dict:
-    prog = json.loads(mcp_call("get_program", {"id": "current"}))
+def list_programs() -> list[dict]:
+    """The user's programs, for the watch's program picker."""
+    data = json.loads(mcp_call("list_programs", {}))
+    return data.get("programs", [])
+
+
+def build_from_liftosaur(program_id: str = "current") -> dict:
+    prog = json.loads(mcp_call("get_program", {"id": program_id}))
     days = parse_program(prog["text"])
     plan, warnings = build_plan(days, _rm1_map())
     sections = sorted({d["section"] for d in plan if d.get("section")})
@@ -280,15 +286,15 @@ def build_from_liftosaur() -> dict:
     }
 
 
-def get_plan(force: bool = False) -> dict:
-    """Cached plan. Raises LiftosaurError if Liftosaur is unreachable and there
-    is no cached copy, so callers can fall back rather than serve a stale lie."""
+def get_plan(program_id: str = "current", force: bool = False) -> dict:
+    """Cached plan for one program. Raises LiftosaurError if Liftosaur is
+    unreachable and there is no cached copy, so callers can fall back rather
+    than serve a stale lie."""
     now = time.time()
-    cached = _CACHE.get("plan")
-    cached_at = float(_CACHE["at"])  # type: ignore[arg-type]
-    if not force and cached is not None and (now - cached_at) < CACHE_TTL_S:
-        return cached  # type: ignore[return-value]
-    plan = build_from_liftosaur()
-    _CACHE["plan"] = plan
-    _CACHE["at"] = now
+    entry = _CACHE.get(program_id)
+    if (not force and isinstance(entry, tuple)
+            and (now - float(entry[0])) < CACHE_TTL_S):
+        return entry[1]  # type: ignore[return-value]
+    plan = build_from_liftosaur(program_id)
+    _CACHE[program_id] = (now, plan)
     return plan

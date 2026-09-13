@@ -68,7 +68,8 @@ def test_targets_come_from_the_plan_when_available():
 
 
 def test_plan_endpoint_returns_the_compiled_plan(monkeypatch):
-    monkeypatch.setattr(plan_mod, "get_plan", lambda: {"program": "P", "days": []})
+    monkeypatch.setattr(plan_mod, "get_plan",
+                        lambda program_id="current", force=False: {"program": "P", "days": []})
     r = client.get("/api/v1/watch/plan")
     assert r.status_code == 200
     assert r.json()["program"] == "P"
@@ -76,7 +77,7 @@ def test_plan_endpoint_returns_the_compiled_plan(monkeypatch):
 
 def test_plan_endpoint_503_so_the_watch_falls_back(monkeypatch):
     """A 503 is meaningful: the watch keeps using its baked-in plan."""
-    def boom():
+    def boom(program_id="current", force=False):
         raise plan_mod.LiftosaurError("liftosaur down")
     monkeypatch.setattr(plan_mod, "get_plan", boom)
     r = client.get("/api/v1/watch/plan")
@@ -139,7 +140,7 @@ def test_successful_write_returns_the_record_id(monkeypatch):
 
 
 def test_plan_section_filter(monkeypatch):
-    monkeypatch.setattr(plan_mod, "get_plan", lambda: {
+    monkeypatch.setattr(plan_mod, "get_plan", lambda program_id="current", force=False: {
         "program": "P", "sections": ["Week 1", "Week 4 - Deload"],
         "days": [{"name": "Day 1", "section": "Week 1", "exercises": []},
                  {"name": "Day 1", "section": "Week 4 - Deload", "exercises": []}]})
@@ -149,3 +150,38 @@ def test_plan_section_filter(monkeypatch):
     assert r.json()["days"][0]["section"] == "Week 1"
     # an unknown section is a 404, not an empty plan the watch would trust
     assert client.get("/api/v1/watch/plan", params={"section": "Nope"}).status_code == 404
+
+
+def test_programs_endpoint(monkeypatch):
+    monkeypatch.setattr(plan_mod, "list_programs",
+                        lambda: [{"id": "abc", "name": "5/3/1", "isCurrent": True}])
+    r = client.get("/api/v1/watch/programs")
+    assert r.status_code == 200
+    assert r.json()["programs"][0]["name"] == "5/3/1"
+
+
+def test_plan_can_target_a_named_program(monkeypatch):
+    """The watch picks a program by id; the endpoint must pass it through."""
+    seen = {}
+
+    def fake_get_plan(program_id="current", force=False):
+        seen["program"] = program_id
+        return {"program": program_id, "days": [], "sections": []}
+
+    monkeypatch.setattr(plan_mod, "get_plan", fake_get_plan)
+    r = client.get("/api/v1/watch/plan", params={"program": "gjedbyiv"})
+    assert r.status_code == 200
+    assert seen["program"] == "gjedbyiv"
+
+
+def test_plan_returns_every_section_when_unfiltered(monkeypatch):
+    """Regression: the watch was only ever given Week 1. Without ?section the
+    response must carry all days, deload included."""
+    monkeypatch.setattr(plan_mod, "get_plan", lambda program_id="current", force=False: {
+        "program": "P", "sections": ["Week 1", "Week 4 - Deload"],
+        "days": [{"name": "Day 1", "section": "Week 1", "exercises": []},
+                 {"name": "Day 1", "section": "Week 4 - Deload", "exercises": []},
+                 {"name": "Day 2", "section": "Week 4 - Deload", "exercises": []}]})
+    r = client.get("/api/v1/watch/plan")
+    assert r.status_code == 200
+    assert len(r.json()["days"]) == 3

@@ -65,8 +65,31 @@ class LiftComms {
 
     // -------------------------------------------------------------------- plan
 
-    function fetchPlan(section as String) as Void {
-        var url = LIFT_BACKEND + "/api/v1/watch/plan?section=" + urlEncode(section);
+    // The user's programs, so they can pick one on the watch.
+    function fetchPrograms() as Void {
+        Communications.makeWebRequest(LIFT_BACKEND + "/api/v1/watch/programs", null, {
+            :method => Communications.HTTP_REQUEST_METHOD_GET,
+            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
+        }, method(:onProgramsResponse));
+    }
+
+    function onProgramsResponse(responseCode as Number,
+                                data as Dictionary or String or Null) as Void {
+        if (responseCode == 200 and (data instanceof Dictionary)) {
+            var progs = (data as Dictionary)["programs"];
+            if (progs instanceof Array and (progs as Array).size() > 0) {
+                _controller.setPrograms(progs as Array);
+                System.println("Comms: " + (progs as Array).size() + " programs");
+            }
+        }
+        // Whatever happened, the plan still needs fetching for the chosen program.
+        fetchPlan(_controller.chosenProgramId());
+    }
+
+    // NOTE: deliberately no ?section filter any more - the user wants the WHOLE
+    // program (all week-blocks, deload included) on the watch.
+    function fetchPlan(programId as String) as Void {
+        var url = LIFT_BACKEND + "/api/v1/watch/plan?program=" + urlEncode(programId);
         System.println("Comms: GET " + url);
         Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_GET,

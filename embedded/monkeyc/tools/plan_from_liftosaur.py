@@ -22,8 +22,24 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_URL = os.environ.get(
-    "LIFTOSAUR_BACKEND", "https://biotechnology-cookbook-calibration-copies.trycloudflare.com")
+def _default_url() -> str:
+    """LIFTOSAUR_BACKEND, else the hostname recorded by liftosaur-tunnel.service.
+
+    NOT a hardcoded hostname: a quick tunnel's is regenerated on every restart,
+    and a stale one silently breaks regeneration (and used to be baked into the
+    watch too).
+    """
+    env = os.environ.get("LIFTOSAUR_BACKEND")
+    if env:
+        return env.rstrip("/")
+    try:
+        with open(os.path.expanduser("~/.liftosaur-tunnel-url")) as fh:
+            return fh.read().strip().rstrip("/")
+    except OSError:
+        return "http://localhost:8008"
+
+
+DEFAULT_URL = _default_url()
 
 
 def http_json(url: str, payload: dict | None = None, timeout: int = 60):
@@ -75,8 +91,9 @@ def main() -> int:
                     help="backend base url (default: %(default)s)")
     ap.add_argument("--from-json", default=None,
                     help="read a saved plan instead of calling the backend")
-    ap.add_argument("--section", default="Week 1",
-                    help="section to bake in ('' for all). Default Week 1.")
+    ap.add_argument("--section", default="",
+                    help="section to bake in ('' = every week-block, which is "
+                         "what the watch wants: it offers all days).")
     ap.add_argument("--out-mc", default="source/PlanData.mc")
     ap.add_argument("--post", default=None,
                     help="path to a workout JSON to POST instead of generating")

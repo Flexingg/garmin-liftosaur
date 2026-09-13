@@ -48,6 +48,11 @@ class WorkoutController {
     private var _pendingBody;
     private var _pendingSets;
     private var _comms;                 // set by the app; null in tests
+    private var _programs;              // Array of program dicts from the backend
+    private var _programIndex;
+    private var _programId;
+    private var _awaitingReps;          // the AMRAP "how many did you get?" step
+    private var _repsEditing;
 
     function initialize() {
         _days = LiftPlan.days();
@@ -78,32 +83,23 @@ class WorkoutController {
         _program = "";
         _pendingBody = null;
         _pendingSets = 0;
+        _programs = [];
+        _programIndex = 0;
+        _programId = "";
+        _awaitingReps = false;
+        _repsEditing = false;
         _resetEditable();
     }
 
     // ------------------------------------------------------------- plan access
 
-    // Days in the section being used (keeps deload days out of the picker).
-    function dayCount() as Number {
-        var n = 0;
-        for (var i = 0; i < _days.size(); i++) {
-            if (((_days[i] as Dictionary)[:section] as String).equals(_section)) {
-                n++;
-            }
-        }
-        return n;
-    }
+    // EVERY day in the plan: all week-blocks, deload included. The picker
+    // distinguishes them by section label rather than hiding any.
+    function dayCount() as Number { return _days.size(); }
 
     private function dayAt(index as Number) as Dictionary or Null {
-        var seen = 0;
-        for (var i = 0; i < _days.size(); i++) {
-            var d = _days[i] as Dictionary;
-            if ((d[:section] as String).equals(_section)) {
-                if (seen == index) { return d; }
-                seen++;
-            }
-        }
-        return null;
+        if (index < 0 or index >= _days.size()) { return null; }
+        return _days[index] as Dictionary;
     }
 
     function section() as String { return _section; }
@@ -115,6 +111,15 @@ class WorkoutController {
     // The day currently highlighted in the picker.
     function selectedDay() as Number { return _dayIndex; }
 
+    function daySectionLabel(index as Number) as String {
+        var d = dayAt(index);
+        return d == null ? "" : d[:section] as String;
+    }
+
+    function hasChosenProgram() as Boolean {
+        return Application.Storage.getValue("lift_program_id") != null;
+    }
+
     function currentDay() as Dictionary or Null {
         return dayAt(_dayIndex);
     }
@@ -123,6 +128,19 @@ class WorkoutController {
         var d = dayAt(index);
         return d == null ? "-" : d[:name] as String;
     }
+
+    // "Day 1" alone is ambiguous across week-blocks, so the picker shows the
+    // section too: "Week 4 - Deload · Day 1".
+    function dayLabel(index as Number) as String {
+        var d = dayAt(index);
+        if (d == null) { return "-"; }
+        var sec = d[:section] as String;
+        if (sec.equals("")) { return d[:name] as String; }
+        return sec + " \u00b7 " + (d[:name] as String);
+    }
+
+    // Every day in the plan, not just the first week-block.
+    function allDays() as Boolean { return true; }
 
     function dayExerciseCount(index as Number) as Number {
         var d = dayAt(index);
@@ -228,6 +246,7 @@ class WorkoutController {
         _resetEditable();
         _restRemaining = 0;
         _restTotal = 0;
+        _awaitingReps = false;
     }
 
     // Begin the session: start recording so Garmin Connect still gets an activity.
@@ -263,9 +282,40 @@ class WorkoutController {
         _reps[_exIndex][_setIndex] = nr;
     }
 
+    // SELECT during rest must ONLY end the rest. Previously it fell through to
+    // completeSet(), which logged a set that had not happened yet and started a
+    // fresh rest - so "skipping" silently ate the next set.
+    function skipRest() as Void {
+        stopRest();
+        WatchUi.requestUpdate();
+    }
+
+    // The AMRAP set drives 5/3/1 progression, so its ACTUAL reps matter. Rather
+    // than log the target, the app asks: adjust with a swipe, confirm with
+    // SELECT. Only gestures proven to work on this device are used.
+    function isAwaitingReps() as Boolean { return _awaitingReps; }
+
+    function beginRepsEntry() as Void {
+        _awaitingReps = true;
+        WatchUi.requestUpdate();
+    }
+
+    // Confirm the reps just entered and finally log the set.
+    function confirmReps() as Void {
+        if (!_awaitingReps) { return; }
+        _awaitingReps = false;
+        completeSet();
+    }
+
     // Mark the current set done and move on, starting the rest countdown.
     function completeSet() as Void {
         if (isFinished()) { return; }
+        // An AMRAP set asks for its actual reps first (unless we are confirming).
+        if (currentAmrap() and !isLogged(_exIndex, _setIndex) and !_awaitingReps) {
+            beginRepsEntry();
+            return;
+        }
+        _awaitingReps = false;
         if (!isLogged(_exIndex, _setIndex)) {
             _logged[_exIndex][_setIndex] = true;
             _setsDone++;
@@ -308,6 +358,12 @@ class WorkoutController {
     // ------------------------------------------------------------------- rest
 
     function startRest(seconds as Number) as Void {
+        // The user can add/remove rest with a swipe, so clamp at zero.
+        if (seconds <= 0) {
+            stopRest();
+            WatchUi.requestUpdate();
+            return;
+        }
         _restTotal = seconds;
         _restRemaining = seconds;
         if (_restTimer == null) {
@@ -425,6 +481,8 @@ class WorkoutController {
 
     // Restore an interrupted session, if the plan still matches.
     function restore() as Boolean {
+        var pid = Application.Storage.getValue("lift_program_id");
+        if (pid != null) { _programId = pid as String; }
         var day = Application.Storage.getValue("lift_day");
         if (day == null) { return false; }
         var d = day as Number;
@@ -454,6 +512,68 @@ class WorkoutController {
         Application.Storage.deleteValue("lift_weights");
         Application.Storage.deleteValue("lift_reps");
         Application.Storage.deleteValue("lift_logged");
+    }
+
+    // ---------------------------------------------------------- program choice
+
+    // Programs come from the backend as JSON dicts (string keys): id, name,
+    // isCurrent. The chosen one is persisted so a restart keeps the selection.
+    function setPrograms(list as Array) as Void {
+        _programs = list;
+        _programIndex = 0;
+        for (var i = 0; i < _programs.size(); i++) {
+            var p = _programs[i] as Dictionary;
+            var cur = p["isCurrent"];
+            if (cur instanceof Boolean and (cur as Boolean)) {
+                _programIndex = i;
+                break;
+            }
+        }
+    }
+
+    function programCount() as Number { return _programs.size(); }
+
+    function programLabel(index as Number) as String {
+        if (index < 0 or index >= _programs.size()) { return "-"; }
+        var p = _programs[index] as Dictionary;
+        var name = p["name"] as String;
+        var cur = p["isCurrent"];
+        if (cur instanceof Boolean and (cur as Boolean)) {
+            return name + " (current)";
+        }
+        return name;
+    }
+
+    function programIdAt(index as Number) as String {
+        if (index < 0 or index >= _programs.size()) { return "current"; }
+        return (_programs[index] as Dictionary)["id"] as String;
+    }
+
+    function selectedProgramIndex() as Number { return _programIndex; }
+
+    function selectProgramIndex(index as Number) as Void { _programIndex = index; }
+
+    // Commit the highlighted program and remember it across restarts.
+    function chooseSelectedProgram() as Void {
+        _programId = programIdAt(_programIndex);
+        Application.Storage.setValue("lift_program_id", _programId);
+        Application.Storage.setValue("lift_program_name", programLabel(_programIndex));
+    }
+
+    function chosenProgramId() as String {
+        if (_programId == null or _programId.equals("")) { return "current"; }
+        return _programId;
+    }
+
+    // After choosing a different program, pull its plan in the background.
+    function reloadPlan() as Void {
+        if (_comms != null) { _comms.fetchPlan(chosenProgramId()); }
+    }
+
+    function chosenProgramName() as String {
+        var n = Application.Storage.getValue("lift_program_name");
+        if (n == null) { return ""; }
+        return n as String;
     }
 
     // ------------------------------------------------------------ backend sync

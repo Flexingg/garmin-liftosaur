@@ -129,8 +129,18 @@ def to_liftohistory(w: WorkoutIn, plan: dict | None = None) -> str:
 
 # ----------------------------------------------------------------- endpoints
 
+@router.get("/watch/programs")
+def watch_programs() -> dict:
+    """The user's programs, for the watch's program picker."""
+    try:
+        progs = plan_mod.list_programs()
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"programs": progs}
+
+
 @router.get("/watch/plan")
-def watch_plan(section: str | None = None) -> dict:
+def watch_plan(section: str | None = None, program: str = "current") -> dict:
     """The compiled plan. 503 when Liftosaur is unreachable, so the watch knows
     to fall back to its baked-in copy instead of showing an empty plan.
 
@@ -139,7 +149,7 @@ def watch_plan(section: str | None = None) -> dict:
     watch, so halving ~15KB is worth it.
     """
     try:
-        plan = plan_mod.get_plan()
+        plan = plan_mod.get_plan(program)
     except plan_mod.LiftosaurError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if section:
