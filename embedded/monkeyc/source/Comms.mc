@@ -180,15 +180,19 @@ class LiftComms {
     // ----------------------------------------------------------------- workout
 
     function postWorkout() as Void {
-        var body = _controller.buildWorkoutBodyOrPending();
-        if (body == null) {
+        // makeWebRequest sends `parameters` as the POST body, and the docs are
+        // explicit that "these values must be URL encoded" - i.e. flat scalars.
+        // Passing a nested array of dictionaries threw Unexpected Type Error and
+        // killed the app on save. The workout goes as ONE compact string field.
+        var payload = _controller.outgoingPayload();
+        if (payload == null or payload.equals("")) {
             System.println("Comms: nothing to post");
             return;
         }
         System.println("Comms: POST " + LIFT_BACKEND + "/api/v1/watch/workout");
-        Communications.makeWebRequest(LIFT_BACKEND + "/api/v1/watch/workout", body, {
+        Communications.makeWebRequest(LIFT_BACKEND + "/api/v1/watch/workout",
+            {:payload => payload}, {
             :method => Communications.HTTP_REQUEST_METHOD_POST,
-            :headers => {"Content-Type" => Communications.REQUEST_CONTENT_TYPE_JSON},
             :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
         }, method(:onPostResponse));
     }

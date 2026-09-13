@@ -187,9 +187,17 @@ class WorkoutController {
 
     function currentSetNumber() as Number { return _setIndex + 1; }
 
-    function currentReps() as Number { return _reps[_exIndex][_setIndex]; }
+    // Bounds-safe: these are reachable from the info/menu screens, which can be
+    // opened when the workout is finished and _exIndex is past the last exercise.
+    function currentReps() as Number {
+        if (_exIndex >= _reps.size() or _setIndex >= _reps[_exIndex].size()) { return 0; }
+        return _reps[_exIndex][_setIndex];
+    }
 
-    function currentWeight() as Number { return _weights[_exIndex][_setIndex]; }
+    function currentWeight() as Number {
+        if (_exIndex >= _weights.size() or _setIndex >= _weights[_exIndex].size()) { return 0; }
+        return _weights[_exIndex][_setIndex];
+    }
 
     function currentRest() as Number {
         var exs = currentExercises();
@@ -199,6 +207,8 @@ class WorkoutController {
 
     function currentAmrap() as Boolean {
         var exs = currentExercises();
+        if (_exIndex >= exs.size()) { return false; }
+        if (_setIndex >= ((exs[_exIndex] as Dictionary)[:sets] as Array).size()) { return false; }
         if (_exIndex >= exs.size()) { return false; }
         var sets = (exs[_exIndex] as Dictionary)[:sets] as Array;
         if (_setIndex >= sets.size()) { return false; }
@@ -441,6 +451,47 @@ class WorkoutController {
         return out;
     }
 
+    // Up to three short lines of "3x10 @ 95" groups. Built here, not in the
+    // view: String.find(value, startIndex) does not exist on this device and
+    // calling it threw "Too Many Arguments Error" inside onUpdate.
+    function infoSetLines() as Array {
+        var lines = [];
+        if (_info == null) { return lines; }
+        var last = _info["last"];
+        if (!(last instanceof Dictionary)) { return lines; }
+        var sets = (last as Dictionary)["sets"];
+        if (!(sets instanceof Array)) { return lines; }
+        var cur = "";
+        var prevW = -1;
+        var prevR = -1;
+        var run = 0;
+        for (var i = 0; i <= (sets as Array).size(); i++) {
+            var w = -1;
+            var r = -1;
+            if (i < (sets as Array).size()) {
+                var st = (sets as Array)[i] as Dictionary;
+                w = st["weight"] as Number;
+                r = st["reps"] as Number;
+            }
+            if (w == prevW and r == prevR) {
+                run++;
+            } else {
+                if (run > 0) {
+                    var grp = run + "x" + prevR + " @ " + prevW;
+                    if ((cur.length() + grp.length() + 3) > 20) {
+                        if (!cur.equals("")) { lines.add(cur); }
+                        cur = grp;
+                    } else {
+                        cur = cur.equals("") ? grp : cur + "   " + grp;
+                    }
+                }
+                prevW = w; prevR = r; run = 1;
+            }
+        }
+        if (!cur.equals("")) { lines.add(cur); }
+        return lines;
+    }
+
     function infoDateText() as String {
         if (_info == null) { return ""; }
         var last = _info["last"];
@@ -468,6 +519,7 @@ class WorkoutController {
 
     // What the plan prescribes right now, for the info screen.
     function targetText() as String {
+        if (isFinished()) { return "session complete"; }
         return currentWeight() + " lb x " + currentReps() +
                (currentAmrap() ? "+" : "") + "   rest " + currentRest() + "s";
     }
@@ -492,6 +544,9 @@ class WorkoutController {
     function requestExerciseInfo() as Void {
         if (_comms != null) { _comms.fetchExerciseInfo(currentExerciseName()); }
     }
+
+    // The compact payload to POST (live session, or a stashed retry).
+    function outgoingPayload() as String or Null { return pendingText(); }
 
     function canGoBack() as Boolean {
         return (_setIndex > 0) or (_exIndex > 0);
@@ -793,7 +848,7 @@ class WorkoutController {
     // Compact stash for a workout that could not be uploaded:
     // "day|section|program|duration;Ex|w|r|a;Ex|w|r|a"
     function pendingText() as String or Null {
-        var body = buildWorkoutBody();
+        var body = buildWorkoutBodyOrPending();
         if (body == null) { return null; }
         var out = (body[:day] as String) + "|" + (body[:section] as String) + "|" +
                   (body[:program] as String) + "|" + (body[:duration_s] as Number);

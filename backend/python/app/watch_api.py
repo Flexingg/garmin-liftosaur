@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import urllib.parse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import plan as plan_mod
@@ -172,9 +173,58 @@ def watch_exercise(name: str) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+
+
+def parse_compact(text: str) -> WorkoutIn:
+    """Parse the watch's compact payload into a WorkoutIn.
+
+    The watch sends this rather than JSON because Connect IQ has no JSON encoder
+    and makeWebRequest only accepts flat scalars as POST parameters.
+    Format: day|section|program|duration_s;exercise|weight|reps|amrap;...
+    """
+    head, _, rest = text.partition(";")
+    fields = head.split("|")
+    if len(fields) < 4:
+        raise ValueError(f"malformed payload header: {head[:60]!r}")
+    sets = []
+    for chunk in rest.split(";"):
+        if not chunk.strip():
+            continue
+        f = chunk.split("|")
+        if len(f) < 4:
+            continue
+        sets.append(LoggedSet(exercise=f[0], weight=float(f[1]),
+                              reps=int(float(f[2])), amrap=f[3] == "1"))
+    return WorkoutIn(day=fields[0], section=fields[1], program=fields[2],
+                     duration_s=int(float(fields[3])), sets=sets)
+
+
 @router.post("/watch/workout")
-def watch_workout(w: WorkoutIn) -> dict:
-    """Write a finished workout into Liftosaur as a history record."""
+async def watch_workout(request: Request) -> dict:
+    """Write a finished workout into Liftosaur as a history record.
+
+    Accepts a JSON body (curl, the build tool, tests) AND the form-encoded
+    `payload` field the watch sends - makeWebRequest can only post flat scalars,
+    so the watch ships the workout as one compact string.
+    """
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "json" in ctype:
+        try:
+            w = WorkoutIn(**(await request.json()))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        # parsed by hand: avoids a python-multipart dependency
+        body = (await request.body()).decode(errors="replace")
+        payload = (urllib.parse.parse_qs(body).get("payload") or [""])[0]
+        if not payload:
+            raise HTTPException(status_code=422,
+                                detail="no payload field; expected form or JSON")
+        try:
+            w = parse_compact(payload)
+        except (ValueError, IndexError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     if not w.sets:
         raise HTTPException(status_code=422, detail="no sets to record")
 

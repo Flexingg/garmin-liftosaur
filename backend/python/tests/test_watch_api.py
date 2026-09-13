@@ -240,3 +240,50 @@ def test_exercise_endpoint(monkeypatch):
     r = client.get("/api/v1/watch/exercise", params={"name": "Squat"})
     assert r.status_code == 200
     assert r.json()["last"]["top_weight"] == 305
+
+
+# --- the watch's compact payload (form-encoded) -----------------------------
+
+def test_parse_compact_round_trips():
+    """The watch cannot build JSON, so it ships this compact string."""
+    from app.watch_api import parse_compact
+    w = parse_compact("Day 1|Week 1|5/3/1 BBB|4200;"
+                      "Squat|220|5|0;Squat|250|5|0;Squat|285|6|1;"
+                      "Romanian Deadlift, Barbell|135|8|0")
+    assert w.day == "Day 1"
+    assert w.program == "5/3/1 BBB"
+    assert w.duration_s == 4200
+    assert [(x.exercise, x.weight, x.reps, x.amrap) for x in w.sets] == [
+        ("Squat", 220, 5, False), ("Squat", 250, 5, False),
+        ("Squat", 285, 6, True), ("Romanian Deadlift, Barbell", 135, 8, False)]
+
+
+def test_parse_compact_rejects_a_malformed_header():
+    from app.watch_api import parse_compact
+    import pytest
+    with pytest.raises(ValueError):
+        parse_compact("garbage")
+
+
+def test_workout_endpoint_accepts_the_watch_form_payload(monkeypatch):
+    """makeWebRequest can only POST flat scalars, so the watch sends `payload`
+    form-encoded. That path must work end to end."""
+    seen = {}
+
+    def fake_mcp(name, args, **kw):
+        seen["text"] = args["text"]
+        return '{"id":123}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout",
+                    data={"payload": "Day 1|Week 1|5/3/1 BBB|4200;"
+                                     "Squat|220|5|0;Squat|285|6|1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["recorded"] is True
+    assert r.json()["id"] == 123
+    assert "Squat / 1x5 220lb, 1x6+ 285lb" in seen["text"]
+
+
+def test_workout_endpoint_rejects_an_empty_form_payload():
+    r = client.post("/api/v1/watch/workout", data={"nope": "x"})
+    assert r.status_code == 422

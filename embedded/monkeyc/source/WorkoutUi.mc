@@ -538,28 +538,16 @@ class ExerciseInfoView extends WatchUi.View {
             drawCentered(dc, c0 - 6, "loading last time...", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
         } else {
-            drawCentered(dc, c0 - 34, "LAST TIME " + _c.infoDateText(),
+            drawCentered(dc, c0 - 44, "LAST TIME " + _c.infoDateText(),
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
-            // the sets are the point of this screen: two short, centred lines
-            var sets = _c.infoSetsText();
-            var cut = sets.length() / 2;
-            var sp = sets.find(" ");
-            var second = "";
-            while (sp != null and sp < cut) {
-                var next = sets.find(" ", sp + 1);
-                if (next == null) { break; }
-                sp = next;
+            // Lines are built in the controller: String.find(value, startIndex)
+            // does not exist on this device (it threw Too Many Arguments here).
+            var lines = _c.infoSetLines();
+            for (var i = 0; i < lines.size() and i < 3; i++) {
+                drawCentered(dc, c0 - 16 + (i * 22), lines[i] as String,
+                             Graphics.FONT_SMALL, LIFT_TEXT);
             }
-            if (sets.length() > 26 and sp != null) {
-                second = sets.substring(sp + 1, sets.length());
-                sets = sets.substring(0, sp);
-            }
-            drawCentered(dc, c0 - 6, sets, Graphics.FONT_SMALL, LIFT_TEXT);
-            if (!second.equals("")) {
-                drawCentered(dc, c0 + 22, second, Graphics.FONT_SMALL, LIFT_TEXT);
-            }
-            drawCentered(dc, c0 + 56,
-                         _c.infoTopText() + "   " + _c.infoE1rmText(),
+            drawCentered(dc, c0 + 62, _c.infoTopText() + "   " + _c.infoE1rmText(),
                          Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
         }
         drawCentered(dc, c0 + 112, "back = return", Graphics.FONT_XTINY,
