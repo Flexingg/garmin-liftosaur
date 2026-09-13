@@ -1,0 +1,1918 @@
+[
+  {
+    "name": "Day 1",
+    "exercises": [
+      {
+        "name": "Squat",
+        "sets": [
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 220.0
+          },
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 250.0
+          },
+          {
+            "reps": 5,
+            "amrap": true,
+            "rest": 180,
+            "weight": 285.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 170.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 170.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 170.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 170.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 170.0
+          }
+        ],
+        "rest": 180,
+        "rm1": 335.0
+      },
+      {
+        "name": "Romanian Deadlift, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 135.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 135.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 135.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Chin Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bench Dip",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 35.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 35.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 35.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 2",
+    "exercises": [
+      {
+        "name": "Bench Press",
+        "sets": [
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 5,
+            "amrap": true,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          }
+        ],
+        "rest": 180,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bent Over Row",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 110.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 110.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 110.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bulgarian Split Squat, Bodyweight",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Standing Calf Raise, Bodyweight",
+        "sets": [
+          {
+            "reps": 15,
+            "amrap": false,
+            "rest": 60,
+            "weight": 55.0
+          },
+          {
+            "reps": 15,
+            "amrap": false,
+            "rest": 60,
+            "weight": 55.0
+          },
+          {
+            "reps": 15,
+            "amrap": false,
+            "rest": 60,
+            "weight": 55.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 3",
+    "exercises": [
+      {
+        "name": "Deadlift",
+        "sets": [
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 180.0
+          },
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 210.0
+          },
+          {
+            "reps": 5,
+            "amrap": true,
+            "rest": 180,
+            "weight": 240.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 140.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 140.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 140.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 140.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 140.0
+          }
+        ],
+        "rest": 180,
+        "rm1": 280.0
+      },
+      {
+        "name": "Good Morning",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 65.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 65.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 65.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Chin Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bench Dip",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 4",
+    "exercises": [
+      {
+        "name": "Overhead Press",
+        "sets": [
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 5,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 5,
+            "amrap": true,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 180,
+            "weight": 0
+          }
+        ],
+        "rest": 180,
+        "rm1": 0.0
+      },
+      {
+        "name": "Reverse Lunge, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Chin Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 5 - Light Pump (Wed)",
+    "exercises": [
+      {
+        "name": "Upright Row, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bicep Curl, Barbell",
+        "sets": [
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 5.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 5.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 5.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Skullcrusher, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 60.0
+      },
+      {
+        "name": "Reverse Curl, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Hanging Leg Raise",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 6 - Weekend Beast Mode",
+    "exercises": [
+      {
+        "name": "Bench Press Close Grip",
+        "sets": [
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Pendlay Row",
+        "sets": [
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 145.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Front Squat",
+        "sets": [
+          {
+            "reps": 7,
+            "amrap": false,
+            "rest": 120,
+            "weight": 5.0
+          },
+          {
+            "reps": 7,
+            "amrap": false,
+            "rest": 120,
+            "weight": 5.0
+          },
+          {
+            "reps": 7,
+            "amrap": false,
+            "rest": 120,
+            "weight": 5.0
+          },
+          {
+            "reps": 7,
+            "amrap": false,
+            "rest": 120,
+            "weight": 5.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Shrug, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 150.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 150.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 150.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 150.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 120.0
+      },
+      {
+        "name": "Bicep Curl, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Triceps Extension, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 5.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 5.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 5.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Ab Wheel",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 7 - Travel Bodyweight",
+    "exercises": [
+      {
+        "name": "Push Up",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Squat, Bodyweight",
+        "sets": [
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 335.0
+      },
+      {
+        "name": "Glute Bridge",
+        "sets": [
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Pike Push Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Inverted Row",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 1"
+  },
+  {
+    "name": "Day 1",
+    "exercises": [
+      {
+        "name": "Romanian Deadlift, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Chin Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bench Dip",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 35.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 35.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 35.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  },
+  {
+    "name": "Day 2",
+    "exercises": [
+      {
+        "name": "Bent Over Row",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 55.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 55.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 55.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bulgarian Split Squat, Bodyweight",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Standing Calf Raise, Bodyweight",
+        "sets": [
+          {
+            "reps": 15,
+            "amrap": false,
+            "rest": 60,
+            "weight": 55.0
+          },
+          {
+            "reps": 15,
+            "amrap": false,
+            "rest": 60,
+            "weight": 55.0
+          },
+          {
+            "reps": 15,
+            "amrap": false,
+            "rest": 60,
+            "weight": 55.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  },
+  {
+    "name": "Day 3",
+    "exercises": [
+      {
+        "name": "Good Morning",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 65.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 65.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 120,
+            "weight": 65.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Chin Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bench Dip",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  },
+  {
+    "name": "Day 4",
+    "exercises": [
+      {
+        "name": "Reverse Lunge, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 100.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Chin Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  },
+  {
+    "name": "Day 5 - Light Pump (Deload)",
+    "exercises": [
+      {
+        "name": "Upright Row, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Bicep Curl, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Skullcrusher, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 60.0
+      },
+      {
+        "name": "Reverse Curl, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 45.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Hanging Leg Raise",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  },
+  {
+    "name": "Day 6 - Weekend Beast (Deload)",
+    "exercises": [
+      {
+        "name": "Bench Press Close Grip",
+        "sets": [
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 140.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 140.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Pendlay Row",
+        "sets": [
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 140.0
+          },
+          {
+            "reps": 6,
+            "amrap": false,
+            "rest": 120,
+            "weight": 140.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Front Squat",
+        "sets": [
+          {
+            "reps": 7,
+            "amrap": false,
+            "rest": 120,
+            "weight": 0.0
+          },
+          {
+            "reps": 7,
+            "amrap": false,
+            "rest": 120,
+            "weight": 0.0
+          }
+        ],
+        "rest": 120,
+        "rm1": 0.0
+      },
+      {
+        "name": "Shrug, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 145.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 145.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 145.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 120.0
+      },
+      {
+        "name": "Bicep Curl, Barbell",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Triceps Extension, Barbell",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Ab Wheel",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  },
+  {
+    "name": "Day 7 - Travel Bodyweight (Deload)",
+    "exercises": [
+      {
+        "name": "Push Up",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Squat, Bodyweight",
+        "sets": [
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 335.0
+      },
+      {
+        "name": "Glute Bridge",
+        "sets": [
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          },
+          {
+            "reps": 12,
+            "amrap": false,
+            "rest": 60,
+            "weight": 0.0
+          }
+        ],
+        "rest": 60,
+        "rm1": 0.0
+      },
+      {
+        "name": "Pike Push Up",
+        "sets": [
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 8,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Inverted Row",
+        "sets": [
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          },
+          {
+            "reps": 10,
+            "amrap": false,
+            "rest": 90,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      },
+      {
+        "name": "Plank",
+        "sets": [
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          },
+          {
+            "reps": 1,
+            "amrap": false,
+            "rest": 45,
+            "weight": 0.0
+          }
+        ],
+        "rest": 90,
+        "rm1": 0.0
+      }
+    ],
+    "section": "Week 4 - Deload"
+  }
+]

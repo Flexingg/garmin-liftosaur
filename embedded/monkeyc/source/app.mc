@@ -1,13 +1,17 @@
-// Liftosaur Garmin app (Venu 2) — Phase 1: core UI + sensor listener.
-// Owner: Embedded Agent.
+// Liftosaur Garmin app — workout entry point.
 //
-// App entry point. Creates the RecordingController (state machine + sensor +
-// ActivityRecording) and wires it to the view and input delegate.
+// The app is a STANDALONE gym companion: the plan is baked in at build time
+// (source/PlanData.mc, generated from the user's Liftosaur program by
+// tools/plan_from_liftosaur.py), so no BLE and no network are needed to train.
+//
+// Flow: DayPickerView -> SetView (select logs a set, up/down adjusts weight,
+// rest counts down and vibrates) -> finish -> save/discard the activity.
+//
+// The BLE streaming experiment is parked, not wired in. See docs/04.
 
 import Toybox.Application;
 import Toybox.Lang;
 import Toybox.System;
-import Toybox.Sensor;
 import Toybox.WatchUi;
 
 class LiftosaurApp extends Application.AppBase {
@@ -16,21 +20,25 @@ class LiftosaurApp extends Application.AppBase {
 
     function initialize() {
         AppBase.initialize();
-        _controller = new RecordingController();
+        _controller = new WorkoutController();
     }
 
-    // Set the app's initial view + input delegate.
     function getInitialView() as [Views] or [Views, InputDelegates] {
-        return [ new LiftView(_controller), new LiftDelegate(_controller) ];
+        return [ new DayPickerView(_controller), new DayPickerDelegate(_controller) ];
     }
 
-    // App fully launched — acquire sensors and go to STATE_IDLE.
+    // Offer to resume an interrupted workout instead of losing it.
     function onStart(state as Dictionary?) as Void {
-        _controller.start();
+        if (_controller.restore()) {
+            System.println("LiftWorkout: restored day " + (_controller.selectedDay() + 1) +
+                           " at exercise " + (_controller.currentExerciseIndex() + 1));
+        }
     }
 
-    // App closing — release sensor resources.
+    // Persist the cursor so a mid-workout exit is recoverable.
     function onStop(state as Dictionary?) as Void {
-        _controller.stop();
+        if (_controller.isStarted()) {
+            _controller.save();
+        }
     }
 }
