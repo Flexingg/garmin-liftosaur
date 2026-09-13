@@ -125,12 +125,12 @@ class ListPickerView extends WatchUi.View {
             drawCentered(dc, c0 + 2, _c.daySectionLabel(idx), Graphics.FONT_XTINY,
                          LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 + 46,
-                         _c.dayExerciseCount(idx) + " exercises \\u00b7 " +
+                         _c.dayExerciseCount(idx) + " exercises - " +
                          _c.daySetCount(idx) + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
         }
 
-        drawCentered(dc, c0 + 108, "swipe   \\u25b6 " +
+        drawCentered(dc, c0 + 108, "swipe   select = " +
                      (_mode.equals("program") ? "choose" : "start"),
                      Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
     }
@@ -222,8 +222,10 @@ class SetView extends WatchUi.View {
                          Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
             drawCentered(dc, c0 + 34, "of " + total + "s", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 104, "\\u25b6 skip rest", Graphics.FONT_XTINY,
+            drawCentered(dc, c0 + 104, "select = skip rest", Graphics.FONT_XTINY,
                          LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 + 128, "swipe = +/- 15s", Graphics.FONT_XTINY,
+                         LIFT_PURPLE_DIM);
             return;
         }
 
@@ -235,7 +237,7 @@ class SetView extends WatchUi.View {
                          Graphics.FONT_NUMBER_MEDIUM, LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 + 36, "target " + _c.currentReps() + "+",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 104, "swipe   \\u25b6 log set",
+            drawCentered(dc, c0 + 104, "swipe = reps   select = log",
                          Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
             return;
         }
@@ -246,7 +248,11 @@ class SetView extends WatchUi.View {
             drawCentered(dc, c0 - 46, "DONE", Graphics.FONT_MEDIUM, LIFT_TEXT);
             drawCentered(dc, c0 + 2, _c.setsDone() + " of " + _c.setsTotal() + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 104, "\\u25b6 finish & save", Graphics.FONT_XTINY,
+            if (!_c.activityNote().equals("")) {
+                drawCentered(dc, c0 + 32, _c.activityNote(), Graphics.FONT_XTINY,
+                             LIFT_PURPLE);
+            }
+            drawCentered(dc, c0 + 104, "select = finish & save", Graphics.FONT_XTINY,
                          LIFT_PURPLE_BRIGHT);
             return;
         }
@@ -258,10 +264,10 @@ class SetView extends WatchUi.View {
         drawCentered(dc, c0 - 8, _c.currentWeight().format("%d"),
                      Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
         drawCentered(dc, c0 + 40,
-                     "lb \\u00d7 " + _c.currentReps().format("%d") +
+                     "lb x " + _c.currentReps().format("%d") +
                      (_c.currentAmrap() ? "+" : ""),
                      Graphics.FONT_MEDIUM, LIFT_PURPLE_BRIGHT);
-        drawCentered(dc, c0 + 112, "swipe = weight   \\u25b6 = done",
+        drawCentered(dc, c0 + 112, "swipe = weight   select = done",
                      Graphics.FONT_XTINY, LIFT_PURPLE_DIM);
     }
 }
@@ -284,6 +290,27 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
+    // BACK steps back a set (un-logging it, so it can be redone). At the start of
+    // the workout it falls through to the default, which leaves the view.
+    function onBack() as Boolean {
+        if (_c.isResting()) { _c.skipRest(); return true; }
+        if (_c.isAwaitingReps()) { _c.confirmReps(); return true; }
+        if (_c.canGoBack()) { _c.previousSet(); return true; }
+        return false;
+    }
+
+    // Long-press SELECT opens the menu on Garmin devices; this is where forward
+    // navigation lives, because swipes are already spoken for by weight/reps.
+    function onMenu() as Boolean {
+        var menu = new WatchUi.Menu2({ :title => "Workout" });
+        menu.addItem(new WatchUi.MenuItem("Next set", null, "next", null));
+        menu.addItem(new WatchUi.MenuItem("Previous set", null, "prev", null));
+        menu.addItem(new WatchUi.MenuItem("Skip to next exercise", null, "skipex", null));
+        menu.addItem(new WatchUi.MenuItem("Finish & save", null, "finish", null));
+        WatchUi.pushView(menu, new SetMenuDelegate(_c), WatchUi.SLIDE_UP);
+        return true;
+    }
+
     function onNextPage() as Boolean {
         // During rest, swipe adds time; otherwise it adjusts the value on screen.
         if (_c.isResting()) { _c.startRest(_c.restRemaining() + 15); }
@@ -299,5 +326,29 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         else { _c.adjustWeight(-5); }
         WatchUi.requestUpdate();
         return true;
+    }
+}
+
+class SetMenuDelegate extends WatchUi.Menu2InputDelegate {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        Menu2InputDelegate.initialize();
+        _c = c;
+    }
+
+    function onSelect(item as WatchUi.MenuItem) as Void {
+        var id = item.getId();
+        if (id.equals("next")) {
+            _c.stepForward();
+        } else if (id.equals("prev")) {
+            if (_c.canGoBack()) { _c.previousSet(); }
+        } else if (id.equals("skipex")) {
+            _c.skipExercise();
+        } else if (id.equals("finish")) {
+            _c.finishWorkout();
+        }
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
     }
 }

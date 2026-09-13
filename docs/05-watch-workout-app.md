@@ -110,6 +110,51 @@ the session. Storage accepts only scalars, so the nested per-set arrays are
 serialised to strings (`"220,250,285"` and a `"0101"` bit string) rather than
 stored as nested arrays — which the API rejects.
 
+## Controls (Venu 2S: SELECT, BACK, touchscreen — no up/down buttons)
+
+| Input | On the set screen | During rest | On the AMRAP step |
+|---|---|---|---|
+| `SELECT` (top-right) / tap | log the set | end the rest | confirm the reps |
+| swipe up / down | weight +/- 5 lb | rest +/- 15 s | reps +/- 1 |
+| `BACK` | step back a set | end the rest | confirm the reps |
+| long-press `SELECT` | menu: next set, previous set, skip exercise, finish | | |
+
+Stepping back **un-logs** the set so it can be redone. The menu's "next set"
+skips *without* logging, which `SELECT` deliberately does not do (it would record
+a set that never happened — that was a real bug: skipping a rest used to log the
+following set).
+
+## Two Monkey C traps this app hit
+
+**`"\u00b7"` is not an escape.** Monkey C does not process `\uXXXX`; it prints
+them literally, so hints rendered as `/u00b7`. Use plain ASCII (or literal UTF-8
+characters) in strings.
+
+**A `WatchUi.Confirmation` answers NO when dismissed with BACK.** The finish
+prompt used one, so a stray BACK silently *discarded* the workout — which looked
+exactly like "the app exits but nothing saves". It is now a `Menu2` with
+**Save & finish** first, and popping the menu without choosing keeps the session
+open so nothing can be lost by accident.
+
+## What the Garmin Connect activity can and cannot contain
+
+The request was for sets/reps/weight on the activity. On the Venu 2S that is
+partly impossible:
+
+- `ActivityRecording.addSets()`, `createSet()` and `SetType` **do not exist** on
+  this device (checked against `venu2s.api.debug.xml`), so a structured
+  strength workout — native sets with reps and weight — cannot be written.
+- `Session.addLap()` **does** exist, so every completed set adds a lap. That
+  gives the activity real content and per-set timing.
+- The activity name carries the day (`Liftosaur - Day 1`) and the sport is a
+  strength training workout.
+- The finish screen reports what happened (`saved to Garmin`, `nothing to save`,
+  `activity not started`) because a silent failure here is indistinguishable
+  from success.
+
+Per-set reps and weight ARE recorded — in Liftosaur, via the sync-back in
+docs/06. It is the app that owns the training data.
+
 ## Known gaps
 
 - **Reps are display-only.** Correcting an AMRAP set's actual reps needs a

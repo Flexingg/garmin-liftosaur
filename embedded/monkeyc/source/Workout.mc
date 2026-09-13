@@ -53,6 +53,9 @@ class WorkoutController {
     private var _programId;
     private var _awaitingReps;          // the AMRAP "how many did you get?" step
     private var _repsEditing;
+    private var _activityNote;          // what happened to the Garmin activity
+    private var _lapsAdded;
+    private var _sessionStopped;
 
     function initialize() {
         _days = LiftPlan.days();
@@ -88,6 +91,9 @@ class WorkoutController {
         _programId = "";
         _awaitingReps = false;
         _repsEditing = false;
+        _activityNote = "";
+        _lapsAdded = 0;
+        _sessionStopped = false;
         _resetEditable();
     }
 
@@ -136,7 +142,7 @@ class WorkoutController {
         if (d == null) { return "-"; }
         var sec = d[:section] as String;
         if (sec.equals("")) { return d[:name] as String; }
-        return sec + " \u00b7 " + (d[:name] as String);
+        return sec + " - " + (d[:name] as String);
     }
 
     // Every day in the plan, not just the first week-block.
@@ -254,13 +260,22 @@ class WorkoutController {
         if (_started) { return; }
         _started = true;
         _sessionMs = System.getTimer();
+        _lapsAdded = 0;
         if (Toybox has :ActivityRecording) {
             _session = ActivityRecording.createSession({
-                :name     => "Liftosaur " + dayName(_dayIndex),
+                :name     => "Liftosaur - " + dayName(_dayIndex),
                 :sport    => Activity.SPORT_TRAINING,
                 :subSport => Activity.SUB_SPORT_STRENGTH_TRAINING
             });
-            _session.start();
+            if (_session == null) {
+                _activityNote = "activity not started";
+            } else {
+                _session.start();
+                _sessionStopped = false;
+                _activityNote = "";
+            }
+        } else {
+            _activityNote = "recording unsupported";
         }
         save();
     }
@@ -307,6 +322,16 @@ class WorkoutController {
         completeSet();
     }
 
+    // The only structured marker this device supports: addSets()/SetType do not
+    // exist on the Venu 2S (verified against its API file), so each completed set
+    // becomes a LAP. That at least gives the activity real content and per-set
+    // timing in Garmin Connect.
+    private function markLap() as Void {
+        if (_session == null) { return; }
+        _session.addLap();
+        _lapsAdded++;
+    }
+
     // Mark the current set done and move on, starting the rest countdown.
     function completeSet() as Void {
         if (isFinished()) { return; }
@@ -319,6 +344,7 @@ class WorkoutController {
         if (!isLogged(_exIndex, _setIndex)) {
             _logged[_exIndex][_setIndex] = true;
             _setsDone++;
+            markLap();
         }
         var rest = currentRest();
         // advance within the exercise, then to the next exercise
@@ -342,6 +368,26 @@ class WorkoutController {
         } else if (_exIndex > 0) {
             _exIndex--;
             _setIndex = currentExerciseSetCount() - 1;
+        }
+        save();
+        WatchUi.requestUpdate();
+    }
+
+    // BACK / menu navigation. Stepping back un-logs the set so it can be redone;
+    // stepping forward via the menu skips WITHOUT logging (the user may have
+    // switched exercises), which completeSet() deliberately does not do.
+    function canGoBack() as Boolean {
+        return (_setIndex > 0) or (_exIndex > 0);
+    }
+
+    function stepForward() as Void {
+        if (isFinished()) { return; }
+        _awaitingReps = false;
+        if (_setIndex + 1 < currentExerciseSetCount()) {
+            _setIndex++;
+        } else {
+            _exIndex++;
+            _setIndex = 0;
         }
         save();
         WatchUi.requestUpdate();
@@ -697,11 +743,21 @@ class WorkoutController {
     // behaviour of the old recording path: no silent Garmin Connect litter.
     function finishWorkout() as Void {
         stopRest();
-        if (_session != null) {
+        _awaitingReps = false;
+        if (_session != null and !_sessionStopped) {
             _session.stop();
+            _sessionStopped = true;
         }
-        WatchUi.pushView(new WatchUi.Confirmation("Save workout?"),
-                         new WorkoutSaveDelegate(self), WatchUi.SLIDE_UP);
+        var menu = new WatchUi.Menu2({ :title => "Finish workout" });
+        menu.addItem(new WatchUi.MenuItem("Save & finish", null, "save", null));
+        menu.addItem(new WatchUi.MenuItem("Discard workout", null, "discard", null));
+        WatchUi.pushView(menu, new WorkoutFinishDelegate(self), WatchUi.SLIDE_UP);
+    }
+
+    // Popping the finish menu without choosing keeps the session open, so a
+    // stray BACK cannot throw the workout away.
+    function finishMenuDismissed() as Void {
+        WatchUi.requestUpdate();
     }
 
     function resolveSave(save as Boolean) as Void {
@@ -713,33 +769,41 @@ class WorkoutController {
         if (_session != null) {
             if (save) {
                 _session.save();
+                _activityNote = "saved to Garmin";
                 System.println("Workout: SAVED " + _setsDone + "/" + _setsTotal + " sets");
             } else {
                 _session.discard();
-                System.println("Workout: DISCARDED");
+                _activityNote = "activity discarded";
             }
             _session = null;
+        } else if (save) {
+            _activityNote = "nothing to save";
         }
         _started = false;
         clearSaved();
     }
+
+    // Reported on the finish screen: the user could not tell whether the
+    // activity reached Garmin Connect, so say so plainly.
+    function activityNote() as String { return _activityNote; }
+    function lapsAdded() as Number { return _lapsAdded; }
 
     function elapsedMs() as Number {
         return _started ? (System.getTimer() - _sessionMs) : 0;
     }
 }
 
-class WorkoutSaveDelegate extends WatchUi.ConfirmationDelegate {
+class WorkoutFinishDelegate extends WatchUi.Menu2InputDelegate {
 
     private var _c;
 
     function initialize(c as WorkoutController) {
-        WatchUi.ConfirmationDelegate.initialize();
+        Menu2InputDelegate.initialize();
         _c = c;
     }
 
-    function onResponse(response as WatchUi.Confirm) as Boolean {
-        _c.resolveSave(response == WatchUi.CONFIRM_YES);
-        return true;
+    function onSelect(item as WatchUi.MenuItem) as Void {
+        _c.resolveSave(item.getId().equals("save"));
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
     }
 }
