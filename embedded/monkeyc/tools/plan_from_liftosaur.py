@@ -1,239 +1,68 @@
-#!/usr/bin/env python3
-"""Generate the watch's embedded workout plan from the user's Liftosaur program.
+"""Send a workout to the backend, and pull the plan into the watch build.
 
-Why: the watch app must work standalone in the gym (no BLE, no network during a
-workout). So the plan is baked into the build as Monkey C data instead of being
-fetched. Re-run this and rebuild the app whenever the program changes.
+Two jobs, both against the backend rather than Liftosaur directly:
 
-Inputs, all from the Liftosaur MCP API (key in LIFTOSAUR_API_KEY or --key):
-  get_program(id=current)   -> Liftoscript source (structure + percentages)
-  list_exercise_data        -> rm1 (training max) per exercise, for the %s
+  --post JSON        POST a logged workout to /api/v1/watch/workout, which
+                     writes it into Liftosaur. Use to verify sync-back from a
+                     shell without the watch.
+  (default)          fetch /api/v1/watch/plan and emit source/PlanData.mc, the
+                     plan baked into the app as the offline fallback.
 
-Outputs:
-  source/PlanData.mc   Monkey C data the watch reads (LiftPlan.days())
-  dist/plan.json       the same plan as JSON, for eyeballing/diffing
-
-Liftoscript understood here (deliberately a subset, matched to this program):
-  # Week N                  week section (ignored: progression scripts handle it)
-  ## Day NAME               day section
-  name / 1x5 65%, ... / 90s / ...          a named SET BLOCK (referenced below)
-  Exercise[, Equipment][weeks] / 3x8 / 135lb 90s   an exercise with inline sets
-  Exercise[...] / ...block                          an exercise reusing a block
-
-Anything it cannot resolve is reported, never silently guessed.
+The plan is COMPILED BY THE BACKEND (app/plan.py) - this script deliberately has
+no parser of its own, so there is exactly one implementation of the weight maths
+and the Liftoscript subset. Point --url at the https tunnel, or --from-json at a
+saved plan to build with no backend running.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
+import urllib.error
+import urllib.request
 
-MCP_URL = "https://www.liftosaur.com/mcp"
-
-
-def mcp(name: str, args: dict, key: str) -> str:
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                       "params": {"name": name, "arguments": args}})
-    out = subprocess.run(
-        ["curl", "-s", "--max-time", "45", "-X", "POST", MCP_URL,
-         "-H", f"Authorization: Bearer {key}",
-         "-H", "Content-Type: application/json",
-         "-H", "Accept: application/json, text/event-stream",
-         "-d", body], capture_output=True, text=True, check=True).stdout
-    return json.loads(out)["result"]["content"][0]["text"]
+DEFAULT_URL = os.environ.get(
+    "LIFTOSAUR_BACKEND", "https://biotechnology-cookbook-calibration-copies.trycloudflare.com")
 
 
-def parse_weight(lb: str) -> float:
-    m = re.search(r"([0-9.]+)\s*lb", lb or "")
-    return float(m.group(1)) if m else 0.0
+def http_json(url: str, payload: dict | None = None, timeout: int = 60):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        url, data=data, method="POST" if data else "GET",
+        headers={"Content-Type": "application/json"} if data else {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
 
 
-def round5(x: float) -> float:
-    """Gym-plate rounding: nearest 5 lb."""
-    return round(x / 5.0) * 5.0
-
-
-# --- set-spec parsing -------------------------------------------------------
-# "1x5 65%" | "1x5+ 85%" | "5x10 50%" | "3x8 135lb 90s" | "3x1 45s|60s"
-SET_RE = re.compile(
-    r"(?P<sets>\d+)\s*x\s*(?P<reps>\d+)(?P<amrap>\+)?"
-    r"(?:\s*(?P<weight>\d+(?:\.\d+)?%|\d+(?:\.\d+)?\s*lb))?"
-    r"(?:\s*(?P<rest>\d+)\s*s)?")
-REST_RE = re.compile(r"(?<![\dx])(\d+)\s*s\b")
-
-
-def parse_sets(spec: str, default_rest: int) -> list[dict]:
-    """Turn a set specification into concrete sets.
-
-    Weight stays symbolic here ('65%' / '135lb') because percentages need the
-    exercise's rm1, which is looked up later.
-    """
-    sets: list[dict] = []
-    for chunk in re.split(r",(?![^(]*\))", spec):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        m = SET_RE.match(chunk)
-        if not m:
-            continue
-        n = int(m.group("sets"))
-        reps = int(m.group("reps"))
-        w = m.group("weight") or ""
-        for _ in range(n):
-            sets.append({
-                "reps": reps,
-                "amrap": bool(m.group("amrap")),
-                "weight_expr": w,
-                "rest": int(m.group("rest")) if m.group("rest") else default_rest,
-            })
-    return sets
-
-
-def parse_program(text: str) -> tuple[list[dict], dict]:
-    """-> (days, blocks). days: [{name, exercises: [...]}] in program order."""
-    days: list[dict] = []
-    blocks: dict[str, dict] = {}
-    cur: dict | None = None
-    section = ""
-    sec_blocks: dict[str, dict] = {}
-    for raw in text.split("\n"):
-        line = raw.strip()
-        if line.startswith("//"):
-            continue
-        # strip inline progress scripts, keeping the head of the line
-        head = re.sub(r"\{.*", "", line).strip()
-        if not head:
-            continue
-        if head.startswith("## "):
-            cur = {"name": head[3:].strip(), "exercises": [], "blocks": {},
-                   "section": section, "blocks": sec_blocks}
-            days.append(cur)
-            continue
-        if head.startswith("#"):
-            section = head.lstrip("#").strip()
-            sec_blocks = {}          # a new section redefines its own blocks
-            continue
-        if head.startswith("!"):
-            continue
-        parts = [p.strip() for p in head.split("/")]
-        name_field = parts[0]
-        # a named set block, e.g. "main / used: none / 1x5 65%, 1x5 75% / 180s"
-        if len(parts) > 2 and re.match(r"^[A-Za-z][\w ]*$", name_field) and cur is not None:
-            rest = 0
-            for p in parts[2:]:
-                rm = REST_RE.search(p)
-                if rm and "x" not in p:
-                    rest = int(rm.group(1))
-            spec = next((p for p in parts[2:] if "x" in p and "%" in p or
-                         re.match(r"^\d+\s*x\s*\d+", p)), "")
-            if spec and re.match(r"^\d+\s*x\s*\d+", spec):
-                sec_blocks[name_field] = {"sets": parse_sets(spec, rest), "rest": rest}
-                continue
-        if cur is None:
-            continue
-        # an exercise entry
-        ex_name = name_field.split("[")[0].strip()
-        sets_spec = ""
-        for p in parts[1:]:
-            if p.startswith("..."):
-                sets_spec = p
-                break
-            if re.match(r"^\d+\s*x\s*\d+", p):
-                sets_spec = p
-                break
-        rest = 0
-        for p in parts[1:]:
-            rm = REST_RE.search(p)
-            if rm and not re.match(r"^\d+\s*x", p):
-                rest = int(rm.group(1))
-        inline_lb = ""
-        for p in parts[1:]:
-            lm = re.search(r"\d+(?:\.\d+)?\s*lb", p)
-            if lm:
-                inline_lb = lm.group(0)
-                break
-        if not ex_name or not sets_spec:
-            continue
-        cur["exercises"].append({
-            "name": ex_name, "sets_spec": sets_spec, "rest": rest, "lb": inline_lb,
-        })
-    return days, blocks
-
-
-def build_plan(days, blocks, rm1: dict) -> list[dict]:
-    # Exercises referenced as "...Name[week]" reuse that exercise's own inline
-    # definition from the first day that spells it out (e.g. "Chin Up[1-3] / 3x8").
-    inline: dict[str, dict] = {}
-    for d in days:
-        for ex in d["exercises"]:
-            if not ex["sets_spec"].startswith("...") and ex["name"] not in inline:
-                inline[ex["name"]] = {"sets": parse_sets(ex["sets_spec"], ex["rest"]),
-                                     "rest": ex["rest"]}
-    out = []
-    for d in days:
-        exs = []
-        for ex in d["exercises"]:
-            spec = ex["sets_spec"]
-            if spec.startswith("..."):
-                # a block belongs to the DAY it is defined in; a bare name like
-                # "Chin Up[1]" instead refers to that exercise's inline sets.
-                ref = spec[3:].strip()
-                ref_name = re.sub(r"\[[^\]]*\]", "", ref).strip()
-                blk = d["blocks"].get(ref) or d["blocks"].get(ref_name) or inline.get(ref_name)
-                if not blk:
-                    print(f"  ! unresolved block '{spec}' for {ex['name']}")
-                    continue
-                sets = [dict(s) for s in blk["sets"]]
-                rest = ex["rest"] or blk["rest"]
-            else:
-                sets = parse_sets(spec, ex["rest"])
-                rest = ex["rest"]
-            if not rest:
-                rest = 90
-            # resolve weights: % -> rm1 * pct, else explicit lb
-            key = ex["name"].lower()
-            ex_rm1 = 0.0
-            for k, v in rm1.items():
-                if k.startswith(key) or key.startswith(k.split("_")[0]):
-                    ex_rm1 = v
-                    break
-            for s in sets:
-                w = s.pop("weight_expr", "")
-                if w.endswith("%"):
-                    pct = float(w[:-1])
-                    s["weight"] = round5(ex_rm1 * pct / 100.0) if ex_rm1 else 0
-                elif w:
-                    s["weight"] = round5(parse_weight(w))
-                else:
-                    s["weight"] = round5(parse_weight(ex["lb"]))
-                s["rest"] = s.get("rest") or rest
-            exs.append({"name": ex["name"], "sets": sets, "rest": rest,
-                        "rm1": ex_rm1})
-        if exs:
-            out.append({"name": d["name"], "exercises": exs,
-                        "section": d.get("section", "")})
-    return out
-
-
-def emit_mc(plan: list[dict]) -> str:
+def emit_mc(plan: dict, section: str) -> str:
+    days = [d for d in plan["days"] if not section or d.get("section") == section]
     L = ["// GENERATED by tools/plan_from_liftosaur.py - do not edit by hand.",
-         "// Source: the user's current Liftosaur program; weights computed from rm1.",
+         "// Source: %s (compiled by backend/python/app/plan.py)" % plan.get("program", "?"),
+         "// Section: %s" % (section or "(all)"),
          "",
          "import Toybox.Lang;",
          "",
          "module LiftPlan {", "",
+         "    // The Liftosaur program name. The history write-back MUST carry this",
+         "    // exact name: Liftosaur rejects a record whose program does not exist.",
+         '    function program() as String {',
+         '        return "%s";' % plan.get("program", "").replace('"', "'"),
+         "    }", "",
          "    // The whole plan: array of days, each with exercises and resolved sets.",
-         "    function days() as Array {", "        return ["]
-    for d in plan:
-        L.append(f'            {{:name => "{d["name"]}", :section => "{d.get("section", "")}", :exercises => [')
+         "    function days() as Array {",
+         "        return ["]
+    for d in days:
+        L.append('            {:name => "%s", :section => "%s", :exercises => ['
+                 % (d["name"], d.get("section", "")))
         for ex in d["exercises"]:
-            L.append(f'                {{:name => "{ex["name"]}", :rest => {ex["rest"]}, :sets => [')
+            L.append('                {:name => "%s", :rest => %d, :sets => ['
+                     % (ex["name"], ex["rest"]))
             for s in ex["sets"]:
-                L.append(f'                    {{:reps => {s["reps"]}, :weight => {int(s["weight"])}, '
-                         f':amrap => {"true" if s["amrap"] else "false"}, :rest => {s["rest"]}}},')
+                L.append('                    {:reps => %d, :weight => %d, '
+                         ':amrap => %s, :rest => %d},'
+                         % (s["reps"], int(s["weight"]),
+                            "true" if s["amrap"] else "false", s["rest"]))
             L.append("                ]},")
         L.append("            ]},")
     L += ["        ];", "    }", "}"]
@@ -242,43 +71,57 @@ def emit_mc(plan: list[dict]) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--key", default=os.environ.get("LIFTOSAUR_API_KEY", ""))
-    ap.add_argument("--default-key-file", default="/home/hermes/.hermes/config.yaml")
+    ap.add_argument("--url", default=DEFAULT_URL,
+                    help="backend base url (default: %(default)s)")
+    ap.add_argument("--from-json", default=None,
+                    help="read a saved plan instead of calling the backend")
+    ap.add_argument("--section", default="Week 1",
+                    help="section to bake in ('' for all). Default Week 1.")
     ap.add_argument("--out-mc", default="source/PlanData.mc")
-    ap.add_argument("--out-json", default="../../dist/plan.json")
+    ap.add_argument("--post", default=None,
+                    help="path to a workout JSON to POST instead of generating")
     args = ap.parse_args()
 
-    key = args.key
-    if not key and os.path.exists(args.default_key_file):
-        m = re.search(r"lftsk_[A-Za-z0-9]+", open(args.default_key_file).read())
-        key = m.group(0) if m else ""
-    if not key:
-        print("no Liftosaur API key (set LIFTOSAUR_API_KEY)", file=sys.stderr)
-        return 2
+    if args.post:
+        body = json.load(open(args.post))
+        try:
+            res = http_json(f"{args.url}/api/v1/watch/workout", body)
+        except urllib.error.HTTPError as exc:
+            print(f"FAILED {exc.code}: {exc.read().decode()[:300]}", file=sys.stderr)
+            return 1
+        print(json.dumps(res, indent=2)[:1200])
+        return 0
 
-    prog = json.loads(mcp("get_program", {"id": "current"}, key))
-    print(f"program: {prog['name']} ({prog['id']})")
-    rm1 = {}
-    data = json.loads(mcp("list_exercise_data", {}, key))
-    for e in data.get("exerciseData", []):
-        rm1[e["key"].split("_")[0].lower()] = parse_weight(e.get("rm1"))
-    print(f"training maxes: {len(rm1)} exercises")
+    if args.from_json:
+        plan = json.load(open(args.from_json))
+    else:
+        try:
+            plan = http_json(f"{args.url}/api/v1/watch/plan")
+        except urllib.error.HTTPError as exc:
+            print(f"backend returned {exc.code}: "
+                  f"{exc.read().decode()[:200]}", file=sys.stderr)
+            return 1
+        except OSError as exc:
+            print(f"cannot reach {args.url}: {exc}\n"
+                  f"(use --from-json for an offline build)", file=sys.stderr)
+            return 1
 
-    days, blocks = parse_program(prog["text"])
-    plan = build_plan(days, blocks, rm1)
-    print(f"sections: {sorted({d.get('section', '') for d in plan})}")
-    print(f"days: {len(plan)}")
-    for d in plan:
-        tot = sum(len(e['sets']) for e in d['exercises'])
+    days = [d for d in plan["days"] if not args.section
+            or d.get("section") == args.section]
+    warns = plan.get("warnings", [])
+    print(f"program: {plan.get('program')}")
+    print(f"section: {args.section or '(all)'} -> {len(days)} days")
+    for d in days:
+        tot = sum(len(e["sets"]) for e in d["exercises"])
         print(f"  {d['name']}: {len(d['exercises'])} exercises, {tot} sets")
+    if warns:
+        print(f"WARNINGS ({len(warns)}):")
+        for w in warns[:10]:
+            print("  !", w)
 
     os.makedirs(os.path.dirname(args.out_mc) or ".", exist_ok=True)
-    open(args.out_mc, "w").write(emit_mc(plan))
-    try:
-        os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
-        json.dump(plan, open(args.out_json, "w"), indent=2)
-    except OSError as e:
-        print(f"  (json not written: {e})")
+    with open(args.out_mc, "w") as fh:
+        fh.write(emit_mc(plan, args.section))
     print(f"wrote {args.out_mc}")
     return 0
 

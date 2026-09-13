@@ -1,0 +1,151 @@
+"""Watch API tests: the Liftohistory write-back format and the two endpoints.
+
+The format matters more than it looks: Liftosaur rejects a malformed history
+record, and a failed write means the user's session is lost. So the exact text
+is asserted here rather than eyeballed.
+"""
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app import plan as plan_mod
+from app.main import app
+from app.watch_api import LoggedSet, WorkoutIn, to_liftohistory
+
+client = TestClient(app)
+
+
+def _set(ex, w, reps, amrap=False):
+    return LoggedSet(exercise=ex, weight=w, reps=reps, amrap=amrap)
+
+
+def test_53_1_wave_is_not_grouped_together():
+    """An ascending wave must stay as separate sets: 220/250/285 are not '3x5'."""
+    w = WorkoutIn(day="Day 1", program="5/3/1 BBB", duration_s=3600,
+                  finished_at=1_700_000_000,
+                  sets=[_set("Squat", 220, 5), _set("Squat", 250, 5),
+                        _set("Squat", 285, 5, amrap=True),
+                        _set("Squat", 170, 10), _set("Squat", 170, 10)])
+    text = to_liftohistory(w)
+    assert "1x5 220lb, 1x5 250lb, 1x5+ 285lb, 2x10 170lb" in text
+    # an AMRAP set carries '+'
+    assert "1x5+ 285lb" in text
+    # units are always explicit
+    assert "lb" in text and "kg" not in text
+
+
+def test_identical_sets_are_collapsed():
+    w = WorkoutIn(day="Day 3", duration_s=60,
+                  sets=[_set("Good Morning", 65, 8) for _ in range(3)])
+    assert "3x8 65lb" in to_liftohistory(w)
+
+
+def test_header_and_exercise_order_follow_the_workout():
+    w = WorkoutIn(day="Day 1", program="5/3/1 BBB", section="Week 1",
+                  week=1, day_in_week=1, duration_s=3700,
+                  finished_at=1_700_000_000,
+                  sets=[_set("Squat", 220, 5), _set("Romanian Deadlift", 135, 8),
+                        _set("Squat", 250, 5)])
+    text = to_liftohistory(w)
+    assert text.startswith("2023-11-14T22:13:20Z / program: \"5/3/1 BBB\"")
+    assert '/ dayName: "Day 1"' in text
+    assert "/ week: 1 / dayInWeek: 1 / duration: 3700s" in text
+    assert text.rstrip().endswith("}")
+    # first-seen order wins, and both Squat sets land on one line
+    assert text.index("Squat") < text.index("Romanian Deadlift")
+    assert "Squat / 1x5 220lb, 1x5 250lb" in text
+
+
+def test_targets_come_from_the_plan_when_available():
+    plan = {"days": [{"name": "Day 1", "exercises": [
+        {"name": "Squat", "rest": 180, "sets": [
+            {"reps": 5, "weight": 220, "amrap": False, "rest": 180},
+            {"reps": 5, "weight": 285, "amrap": True, "rest": 180}]}]}]}
+    w = WorkoutIn(day="Day 1", duration_s=10, sets=[_set("Squat", 220, 5)])
+    text = to_liftohistory(w, plan)
+    assert "/ target: 5 220lb 180s, 5+ 285lb 180s" in text
+
+
+def test_plan_endpoint_returns_the_compiled_plan(monkeypatch):
+    monkeypatch.setattr(plan_mod, "get_plan", lambda: {"program": "P", "days": []})
+    r = client.get("/api/v1/watch/plan")
+    assert r.status_code == 200
+    assert r.json()["program"] == "P"
+
+
+def test_plan_endpoint_503_so_the_watch_falls_back(monkeypatch):
+    """A 503 is meaningful: the watch keeps using its baked-in plan."""
+    def boom():
+        raise plan_mod.LiftosaurError("liftosaur down")
+    monkeypatch.setattr(plan_mod, "get_plan", boom)
+    r = client.get("/api/v1/watch/plan")
+    assert r.status_code == 503
+
+
+def test_workout_endpoint_writes_liftohistory(monkeypatch):
+    seen = {}
+
+    def fake_mcp(name, args, **kw):
+        seen["name"] = name
+        seen["text"] = args["text"]
+        return "{\"id\":\"abc\"}"
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout", json={
+        "day": "Day 1", "program": "5/3/1 BBB", "duration_s": 3600,
+        "sets": [{"exercise": "Squat", "weight": 220, "reps": 5},
+                 {"exercise": "Squat", "weight": 285, "reps": 5, "amrap": True}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["recorded"] is True
+    assert seen["name"] == "create_history_record"
+    assert "1x5 220lb, 1x5+ 285lb" in seen["text"]
+
+
+def test_workout_endpoint_rejects_an_empty_session(monkeypatch):
+    r = client.post("/api/v1/watch/workout", json={"day": "Day 1", "sets": []})
+    assert r.status_code == 422
+
+
+def test_workout_endpoint_reports_liftosaur_failure(monkeypatch):
+    def boom(name, args, **kw):
+        raise plan_mod.LiftosaurError("create_history_record failed")
+    monkeypatch.setattr(plan_mod, "mcp_call", boom)
+    r = client.post("/api/v1/watch/workout", json={
+        "day": "Day 1", "sets": [{"exercise": "Squat", "weight": 220, "reps": 5}]})
+    assert r.status_code == 502
+
+
+def test_rejected_record_is_not_reported_as_success(monkeypatch):
+    """Liftosaur returns a rejection as CONTENT with a 200 ('Program "X" not
+    found'). Reporting that as recorded=True would tell the user their workout
+    saved when it was thrown away."""
+    monkeypatch.setattr(plan_mod, "mcp_call",
+                        lambda name, args, **kw: 'Program "Nope" not found.')
+    r = client.post("/api/v1/watch/workout", json={
+        "day": "Day 1", "program": "Nope",
+        "sets": [{"exercise": "Squat", "weight": 220, "reps": 5}]})
+    assert r.status_code == 502
+    assert "not found" in r.json()["detail"]
+
+
+def test_successful_write_returns_the_record_id(monkeypatch):
+    monkeypatch.setattr(plan_mod, "mcp_call",
+                        lambda name, args, **kw: '{"id":1789286774000,"text":"..."}')
+    r = client.post("/api/v1/watch/workout", json={
+        "day": "Day 1", "sets": [{"exercise": "Squat", "weight": 220, "reps": 5}]})
+    assert r.status_code == 200
+    assert r.json()["id"] == 1789286774000
+
+
+def test_plan_section_filter(monkeypatch):
+    monkeypatch.setattr(plan_mod, "get_plan", lambda: {
+        "program": "P", "sections": ["Week 1", "Week 4 - Deload"],
+        "days": [{"name": "Day 1", "section": "Week 1", "exercises": []},
+                 {"name": "Day 1", "section": "Week 4 - Deload", "exercises": []}]})
+    r = client.get("/api/v1/watch/plan", params={"section": "Week 1"})
+    assert r.status_code == 200
+    assert len(r.json()["days"]) == 1
+    assert r.json()["days"][0]["section"] == "Week 1"
+    # an unknown section is a 404, not an empty plan the watch would trust
+    assert client.get("/api/v1/watch/plan", params={"section": "Nope"}).status_code == 404

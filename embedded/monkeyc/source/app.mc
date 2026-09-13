@@ -17,10 +17,14 @@ import Toybox.WatchUi;
 class LiftosaurApp extends Application.AppBase {
 
     private var _controller;
+    private var _comms;
 
     function initialize() {
         AppBase.initialize();
         _controller = new WorkoutController();
+        _comms = new LiftComms(_controller);
+        _controller.setComms(_comms);
+        _controller.setProgram(LiftPlan.program());
     }
 
     function getInitialView() as [Views] or [Views, InputDelegates] {
@@ -29,6 +33,11 @@ class LiftosaurApp extends Application.AppBase {
 
     // Offer to resume an interrupted workout instead of losing it.
     function onStart(state as Dictionary?) as Void {
+        // Refresh the plan from the backend (https); on failure the plan baked
+        // into the app is used, so a workout is never blocked by the network.
+        _comms.fetchPlan(_controller.section());
+        // Anything that failed to upload last time goes now.
+        _comms.retryPending();
         if (_controller.restore()) {
             System.println("LiftWorkout: restored day " + (_controller.selectedDay() + 1) +
                            " at exercise " + (_controller.currentExerciseIndex() + 1));

@@ -20,6 +20,11 @@ API_VERSION = "0.2.0"
 
 app = FastAPI(title="Garmin_Liftosaur Backend", version=API_VERSION)
 
+# Watch-facing routes (plan fetch + workout write-back to Liftosaur).
+from app.watch_api import router as watch_router  # noqa: E402
+
+app.include_router(watch_router, prefix="/api/v1")
+
 LBS_TO_KG = 0.45359237
 
 

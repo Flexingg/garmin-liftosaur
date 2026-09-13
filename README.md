@@ -30,6 +30,10 @@ kinematic physics and machine-learning rep detection.
 - **`docs/03-garmin-toolchain-and-sideload.md`** — ⭐ verified Connect IQ toolchain,
   signing keys, building, sideloading, failure diagnosis, and how to start a **new**
   Garmin app. Read this before touching the watch.
+- **`docs/05-watch-workout-app.md`** — ⭐ the standalone watch workout app: how the
+  Liftosaur program is compiled into weights and baked into the build
+- **`docs/06-sync.md`** — ⭐ fetch + write-back: the https tunnel, the plan
+  endpoint, and why Liftosaur rejects a bad program name with a 200
 - **`docs/04-ble-transport.md`** — ⭐ the real-time BLE link: why the phone is the
   peripheral and the watch is the central, the UUIDs, the binary wire format,
   fragmentation, and what is/isn't verified.
@@ -115,7 +119,8 @@ on purpose — the phone reaches it over the LAN, and the app's default backend 
     `source/LiftBleTransport.mc`.
   - ⬜ Hardware Checkpoint 2 — watch pairs with the phone and streams chunks
     without dropped frames (**not yet run on hardware**)
-- **Phase 3** — Liftosaur API integration (fetch weight/exercise) 🛑 HW checkpoint 3
+- **Phase 3** — Liftosaur API integration (fetch weight/exercise) ✅ *fetch and
+  write-back both verified against the live API (docs/06)*
 - **Phase 4** — Physics engine + backend ingestion ✅ *verified end-to-end*
   (`mobile/flutter/tool/smoke_e2e.dart` → 20 Hz set → peak 278 W / 1.62 m/s).
   Fixed a Nyquist bug that rejected every ~20 Hz set — see

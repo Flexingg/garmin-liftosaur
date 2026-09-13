@@ -13,6 +13,9 @@
     </iq:products>
     <iq:permissions>
       <iq:uses-permission id="Sensor" />
+      <!-- Watch -> backend plan fetch and workout upload. https only: the
+           platform refuses plain http with SECURE_CONNECTION_REQUIRED. -->
+      <iq:uses-permission id="Communications" />
       <!-- BLE central role: the WATCH is the central and the phone hosts
            the GATT server. See docs/04-ble-transport.md. -->
       <iq:uses-permission id="BluetoothLowEnergy" />

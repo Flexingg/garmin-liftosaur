@@ -44,6 +44,10 @@ class WorkoutController {
 
     private var _setsDone;
     private var _setsTotal;
+    private var _program;
+    private var _pendingBody;
+    private var _pendingSets;
+    private var _comms;                 // set by the app; null in tests
 
     function initialize() {
         _days = LiftPlan.days();
@@ -71,6 +75,9 @@ class WorkoutController {
         _reps = [];
         _setsDone = 0;
         _setsTotal = 0;
+        _program = "";
+        _pendingBody = null;
+        _pendingSets = 0;
         _resetEditable();
     }
 
@@ -100,6 +107,10 @@ class WorkoutController {
     }
 
     function section() as String { return _section; }
+
+    function setProgram(name as String) as Void { _program = name; }
+
+    function setComms(c as LiftComms) as Void { _comms = c; }
 
     // The day currently highlighted in the picker.
     function selectedDay() as Number { return _dayIndex; }
@@ -445,6 +456,119 @@ class WorkoutController {
         Application.Storage.deleteValue("lift_logged");
     }
 
+    // ------------------------------------------------------------ backend sync
+
+    // Swap in the plan fetched from the backend. Refused once a workout is
+    // under way: replacing the plan mid-session would invalidate the cursor.
+    function adoptRemotePlan(days as Array) as Boolean {
+        if (_started or days.size() == 0) { return false; }
+        _days = days;
+        _section = "";
+        for (var i = 0; i < _days.size(); i++) {
+            var sec = (_days[i] as Dictionary)[:section] as String;
+            if (_section.equals("")) { _section = sec; }
+        }
+        _dayIndex = 0;
+        _exIndex = 0;
+        _setIndex = 0;
+        _resetEditable();
+        return true;
+    }
+
+    // The body for POST /api/v1/watch/workout: only sets the user actually
+    // completed, in the order they were trained.
+    function buildWorkoutBody() as Dictionary or Null {
+        var sets = [];
+        var exs = currentExercises();
+        for (var i = 0; i < exs.size(); i++) {
+            var name = (exs[i] as Dictionary)[:name] as String;
+            var planSets = (exs[i] as Dictionary)[:sets] as Array;
+            for (var j = 0; j < planSets.size(); j++) {
+                if (!isLogged(i, j)) { continue; }
+                sets.add({
+                    :exercise => name,
+                    :weight => _weights[i][j] as Number,
+                    :reps => _reps[i][j] as Number,
+                    :amrap => (planSets[j] as Dictionary)[:amrap] as Boolean
+                });
+            }
+        }
+        if (sets.size() == 0) { return null; }
+        return {
+            :day => dayName(_dayIndex),
+            :section => _section,
+            :program => _program,
+            :week => 1,
+            :day_in_week => _dayIndex + 1,
+            :duration_s => elapsedMs() / 1000,
+            :sets => sets
+        };
+    }
+
+    // Compact stash for a workout that could not be uploaded:
+    // "day|section|program|duration;Ex|w|r|a;Ex|w|r|a"
+    function pendingText() as String or Null {
+        var body = buildWorkoutBody();
+        if (body == null) { return null; }
+        var out = (body[:day] as String) + "|" + (body[:section] as String) + "|" +
+                  (body[:program] as String) + "|" + (body[:duration_s] as Number);
+        var sets = body[:sets] as Array;
+        for (var i = 0; i < sets.size(); i++) {
+            var s = sets[i] as Dictionary;
+            out += ";" + (s[:exercise] as String) + "|" + (s[:weight] as Number) + "|" +
+                   (s[:reps] as Number) + "|" + ((s[:amrap] as Boolean) ? "1" : "0");
+        }
+        return out;
+    }
+
+    // Rebuild a stashed workout so it can be posted again.
+    function loadPendingText(text as String) as Boolean {
+        var i = text.find(";");
+        if (i == null) { return false; }
+        var head = text.substring(0, i);
+        var fields = _split(head, "|");
+        if (fields.size() < 4) { return false; }
+        var sets = [];
+        var rest = text.substring(i + 1, text.length());
+        var parts = _split(rest, ";");
+        for (var k = 0; k < parts.size(); k++) {
+            var f = _split(parts[k] as String, "|");
+            if (f.size() < 4) { continue; }
+            sets.add({:exercise => f[0], :weight => (f[1] as String).toNumber(),
+                      :reps => (f[2] as String).toNumber(),
+                      :amrap => (f[3] as String).equals("1")});
+        }
+        if (sets.size() == 0) { return false; }
+        _pendingBody = {
+            :day => fields[0], :section => fields[1], :program => fields[2],
+            :duration_s => (fields[3] as String).toNumber(),
+            :week => 1, :day_in_week => 1, :sets => sets
+        };
+        _pendingSets = sets.size();
+        return true;
+    }
+
+    function buildWorkoutBodyOrPending() as Dictionary or Null {
+        if (_pendingBody != null) { return _pendingBody; }
+        return buildWorkoutBody();
+    }
+
+    function pendingSetCount() as Number { return _pendingSets; }
+
+    private function _split(s as String, sep as String) as Array {
+        var out = [];
+        var start = 0;
+        var len = s.length();
+        for (var i = 0; i <= len; i++) {
+            var atEnd = (i == len);
+            if (atEnd or (s.substring(i, i + 1) as String).equals(sep)) {
+                out.add(s.substring(start, i));
+                start = i + 1;
+            }
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------------ finish
 
     // Stop recording and let the user keep or discard the activity. Mirrors the
@@ -459,6 +583,11 @@ class WorkoutController {
     }
 
     function resolveSave(save as Boolean) as Void {
+        if (save) {
+            // Hand the finished workout to the backend, which writes it into
+            // Liftosaur. Failures are stashed and retried on the next launch.
+            if (_comms != null) { _comms.postWorkout(); }
+        }
         if (_session != null) {
             if (save) {
                 _session.save();
