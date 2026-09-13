@@ -250,6 +250,34 @@ This also means the link was probably fine from the *first* successful pairing -
 the app simply never noticed it, which is why every "recovery" change made no
 difference to whether data flowed.
 
+## 5d. A failed profile registration is fatal and silent
+
+`registerProfile()` does not throw on failure. The result arrives later in
+`onProfileRegister(uuid, status)`, and **if the status is not `STATUS_SUCCESS`
+then every `getService()` returns null forever** - so the link looks connected
+while nothing is ever written.
+
+What we got wrong twice:
+
+1. **The result was never read at all.** The callback existed in the API and we
+   ignored it, so a registration failure was indistinguishable from "still
+   connecting". It now shows as `ble:prof-fail:<status>` - with the numeric
+   status, because the name alone does not say *why*.
+
+2. **The "pending" state was indistinguishable from failure.** We initialised
+   the status to `-1` but tested only `!= null`, so `prof-fail` was displayed
+   before any callback had arrived - a false alarm that could have sent us
+   chasing a bug that did not exist. Pending is now `null`.
+
+The profile definition itself was also wrong: we declared
+`BluetoothLowEnergy.cccdUuid()` as a descriptor. That is copied from the
+NordicThingy52 sample, whose characteristic is a **notify** one, where the CCCD
+is the notify-configuration descriptor. Our characteristic is **write-only**, so
+declaring a CCCD is incorrect and is a plausible cause of a rejection. It is now
+an empty array.
+
+Registration is retried up to 3 times, 5 s apart, if it fails.
+
 ## 6. Android permissions
 
 `android/app/src/main/AndroidManifest.xml` declares `BLUETOOTH_ADVERTISE`,

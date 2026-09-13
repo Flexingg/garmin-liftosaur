@@ -140,6 +140,8 @@ class LiftBleTransport extends LiftTransport {
     // STATUS_SUCCESS the app can never look up its service, so no characteristic
     // will ever resolve and every frame is skipped - the exact silence we hit.
     private var _profileStatus;
+    private var _profileAttempts;   // registerProfile tries (cap 3)
+    private var _lastProfileRetryMs;
     private var _sawAdvertisers;
     private var _scanStartedMs;   // when the current scan began
     private var _scanRestarts;    // blind-scan recoveries
@@ -166,8 +168,11 @@ class LiftBleTransport extends LiftTransport {
         _resolveTries = 0;
         _pairStartedMs = 0;
         _lastStatus = 0;
-        // null = not yet reported; -1 also means pending.
-        _profileStatus = -1;
+        // null = pending. Must stay null until onProfileRegister reports,
+        // otherwise the statusLine() test below fires before the first callback.
+        _profileStatus = null;
+        _profileAttempts = 0;
+        _lastProfileRetryMs = 0;
         _sawAdvertisers = 0;
         _scanStartedMs = 0;
         _scanRestarts = 0;
@@ -196,18 +201,33 @@ class LiftBleTransport extends LiftTransport {
         }
         _delegate = new LiftBleDelegate(self);
         BluetoothLowEnergy.setDelegate(_delegate);
-
-        BluetoothLowEnergy.registerProfile({
-            :uuid => LiftBle.serviceUuid(),
-            :characteristics => [{
-                :uuid => LiftBle.dataUuid(),
-                :descriptors => [BluetoothLowEnergy.cccdUuid()]
-            }]
-        });
+        registerOurProfile();
 
         _started = true;
         resumeScanning();
         System.println("LiftBle: scanning for '" + LiftBle.LOCAL_NAME + "'");
+    }
+
+    // Declares the profile the app needs. Split out from initialize() because
+    // registration can FAIL and is retried from tick(): the callback
+    // onProfileRegister() is the only way to learn the result, and a failure
+    // makes every service lookup return null forever.
+    //
+    // :descriptors is an EMPTY array on purpose. The NordicThingy52 sample puts
+    // BluetoothLowEnergy.cccdUuid() here, but its characteristic is a NOTIFY one
+    // and the CCCD is the notify-configuration descriptor. Ours is write-only,
+    // so declaring a CCCD is wrong - and a malformed definition is a plausible
+    // cause of a registration failure.
+    private function registerOurProfile() as Void {
+        _profileStatus = null;
+        _profileAttempts++;
+        BluetoothLowEnergy.registerProfile({
+            :uuid => LiftBle.serviceUuid(),
+            :characteristics => [{
+                :uuid => LiftBle.dataUuid(),
+                :descriptors => []
+            }]
+        });
     }
 
     function stop() as Void {
@@ -271,7 +291,7 @@ class LiftBleTransport extends LiftTransport {
         if (!_started) { return "off"; }
         if (_profileStatus != null &&
             (_profileStatus as Number) != BluetoothLowEnergy.STATUS_SUCCESS) {
-            return "prof-fail";
+            return "prof-fail:" + _profileStatus;
         }
         if (_data != null) { return "ready"; }      // we can write
         if (_pairedDevice != null) {
@@ -336,6 +356,19 @@ class LiftBleTransport extends LiftTransport {
         if (_data == null && (adoptNow - _lastAdoptMs) > 1000) {
             _lastAdoptMs = adoptNow;
             adoptConnectedDevice();
+        }
+
+        // A failed profile registration is fatal to every service lookup, so
+        // retry it a few times rather than sitting dead. Bounded on purpose:
+        // registerProfile() is not something to hammer.
+        if (_profileStatus != null &&
+            _profileStatus != BluetoothLowEnergy.STATUS_SUCCESS &&
+            _profileAttempts < 3 &&
+            (adoptNow - _lastProfileRetryMs) > 5000) {
+            _lastProfileRetryMs = adoptNow;
+            System.println("LiftBle: profile register failed (" + _profileStatus +
+                           "); retry " + _profileAttempts);
+            registerOurProfile();
         }
 
         // Holding a paired device but no characteristic yet: keep trying. This
