@@ -71,6 +71,11 @@ class LiftTransport {
     function scanRestarts() as Number {
         return 0;
     }
+
+    // How many times the link has paired with the peer.
+    function pairAttempts() as Number {
+        return 0;
+    }
 }
 
 // Logs the frame. Used for HW checkpoint validation and as a fallback.
@@ -175,5 +180,10 @@ class LiftTeeTransport extends LiftTransport {
     function scanRestarts() as Number {
         if (_parts.size() == 0) { return 0; }
         return _parts[0].scanRestarts();
+    }
+
+    function pairAttempts() as Number {
+        if (_parts.size() == 0) { return 0; }
+        return _parts[0].pairAttempts();
     }
 }

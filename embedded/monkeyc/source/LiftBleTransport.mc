@@ -97,8 +97,11 @@ class LiftBleTransport extends LiftTransport {
     // practice; if writes start failing, lower this before anything else.
     private const MAX_FRAGMENT_PAYLOAD = 180;
 
-    // Give up on a pair attempt that never connects, then scan again.
-    private const PAIR_TIMEOUT_MS = 8000;
+    // Give up on a pair attempt that never connects, then scan again. Generous on
+    // purpose: the handshake involves the system BLE stack and possibly bonding,
+    // and cutting it off early caused a scan/pair thrash loop that left the
+    // radio hearing nothing at all (adv 49 -> 0).
+    private const PAIR_TIMEOUT_MS = 30000;
     // If we are connected but can never resolve the characteristic, the peer is
     // probably wrong (or its GATT server is not serving our profile): re-scan.
     private const MAX_RESOLVE_TRIES = 40;
@@ -125,6 +128,8 @@ class LiftBleTransport extends LiftTransport {
     private var _sawAdvertisers;
     private var _scanStartedMs;   // when the current scan began
     private var _scanRestarts;    // blind-scan recoveries
+    private var _pairAttempts;    // how many times we have paired
+    private var _lastResolveMs;   // throttle for getService retries
 
     function initialize() {
         LiftTransport.initialize();
@@ -146,6 +151,8 @@ class LiftBleTransport extends LiftTransport {
         _sawAdvertisers = 0;
         _scanStartedMs = 0;
         _scanRestarts = 0;
+        _pairAttempts = 0;
+        _lastResolveMs = 0;
     }
 
     // Register the profile the phone will host, then start scanning for it.
@@ -199,6 +206,7 @@ class LiftBleTransport extends LiftTransport {
     function lastWriteStatus() as Number { return _lastStatus; }
     function advertisersSeen() as Number { return _sawAdvertisers; }
     function scanRestarts() as Number { return _scanRestarts; }
+    function pairAttempts() as Number { return _pairAttempts; }
     function deviceName() as String {
         return _device == null ? "" : _device.getName();
     }
@@ -207,12 +215,12 @@ class LiftBleTransport extends LiftTransport {
     //   off | scan | waiting | no-svc | no-char | ready
     function statusLine() as String {
         if (!_started) { return "off"; }
-        if (_connected) {
+        if (_data != null) { return "ready"; }      // we can write
+        if (_pairedDevice != null) {
             if (_service == null) { return "no-svc"; }
-            if (_data == null) { return "no-char"; }
-            return "ready";
+            return "no-char";
         }
-        if (_pairStartedMs != 0) { return "waiting"; }  // paired, awaiting connect
+        if (_connected) { return "conn?"; }
         if (_scanning) { return "scan"; }
         return "lost";
     }
@@ -245,17 +253,22 @@ class LiftBleTransport extends LiftTransport {
     function tick() as Void {
         if (!_started) { return; }
 
-        if (_connected) {
-            // Retry/verify the service+characteristic here rather than only in
-            // emit(), so a bogus pairing is cleaned up while the app is idle.
-            if (_data == null) {
+        // Holding a paired device but no characteristic yet: keep trying. This
+        // covers both "connected but discovery unfinished" and, importantly,
+        // "the system never reported a connection to us at all".
+        if (_pairedDevice != null && _data == null) {
+            var now = System.getTimer();
+            if ((now - _lastResolveMs) > 500) {
+                _lastResolveMs = now;
                 resolveCharacteristic();
+            }
+        }
+
+        if (_connected || (_pairedDevice != null && _data == null)) {
+            if (_data == null) {
                 if (_resolveTries > MAX_RESOLVE_TRIES) {
                     System.println("LiftBle: characteristic never resolved (" +
-                                   _resolveTries + " tries); unpairing + rescanning");
-                    if (_device != null) {
-                        BluetoothLowEnergy.unpairDevice(_device);
-                    }
+                                   _resolveTries + " tries); rescanning (no unpair)");
                     _device = null;
                     _pairedDevice = null;
                     _connected = false;
@@ -272,12 +285,15 @@ class LiftBleTransport extends LiftTransport {
         // that will never connect.
         if (_pairStartedMs != 0) {
             if ((System.getTimer() - _pairStartedMs) > PAIR_TIMEOUT_MS) {
-                System.println("LiftBle: pair timed out; unpairing and rescanning");
-                if (_pairedDevice != null) {
-                    BluetoothLowEnergy.unpairDevice(_pairedDevice);
-                    _pairedDevice = null;
-                }
+                // Deliberately do NOT unpairDevice(): the peer is normally the
+                // user's own phone, which the watch is also bonded to for Garmin
+                // Connect. Unpairing that (or thrashing pair/unpair) can break the
+                // phone link and leave the radio hearing nothing.
+                System.println("LiftBle: pair did not connect within " +
+                               (PAIR_TIMEOUT_MS / 1000) + "s; retrying scan");
+                _pairedDevice = null;
                 _resolveTries = 0;
+                _pairAttempts++;
                 resumeScanning();
             }
             return;
@@ -387,8 +403,18 @@ class LiftBleTransport extends LiftTransport {
                 resumeScanning();
             } else {
                 _pairedDevice = dev;
+                _device = dev;                 // usable right away
                 _pairStartedMs = System.getTimer();
-                System.println("LiftBle: paired; waiting for connection");
+                _pairAttempts++;
+                // Do not wait for onConnectedStateChanged: when the system already
+                // holds a connection to this peer (the phone is bonded to the
+                // watch for Garmin Connect), that callback may never fire. Try to
+                // resolve the characteristic immediately and keep retrying in
+                // tick().
+                resolveCharacteristic();
+                System.println("LiftBle: paired (try " + _pairAttempts +
+                               "); service=" + (_service == null ? "not yet" : "ok") +
+                               " char=" + (_data == null ? "not yet" : "ok"));
             }
             return;
         }
