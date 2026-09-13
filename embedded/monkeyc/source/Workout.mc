@@ -462,13 +462,15 @@ class WorkoutController {
     // under way: replacing the plan mid-session would invalidate the cursor.
     function adoptRemotePlan(days as Array) as Boolean {
         if (_started or days.size() == 0) { return false; }
+        var keepDay = _dayIndex;   // do not yank the picker back while choosing
         _days = days;
         _section = "";
         for (var i = 0; i < _days.size(); i++) {
             var sec = (_days[i] as Dictionary)[:section] as String;
             if (_section.equals("")) { _section = sec; }
         }
-        _dayIndex = 0;
+        var n = dayCount();
+        _dayIndex = (keepDay < n) ? keepDay : 0;
         _exIndex = 0;
         _setIndex = 0;
         _resetEditable();
