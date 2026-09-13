@@ -1,36 +1,39 @@
 // Liftosaur watch workout — views and input.
 //
-// Design brief: Apple-Watch-like restraint, in Liftosaur's purple. Each screen
-// shows ONE thing prominently and almost nothing else. The first version was a
-// wall of small grey lines, which read as crowded on a 360px round display.
+// Apple-Watch-like restraint in Liftosaur's brand purple (#8356F6, taken from
+// the app icon). One focal number per screen, a complete progress ring faded
+// behind the text, and almost nothing else competing for attention.
 //
-// LAYOUT RULES (learned the hard way):
-//  - The Venu 2S is a ROUND 360x360: the square's corners are behind the bezel.
-//    Everything is centred, with a progress ring at r=150 and no text near the
-//    edges. safeHalfWidth() gives the usable width at a given y.
-//  - Handlers MUST be on a WatchUi.BehaviorDelegate. onSelect/onNextPage/
-//    onPreviousPage belong to BehaviorDelegate; on an InputDelegate they are
-//    never called and the app looks frozen.
-//  - This device has no up/down buttons and no long-press: SELECT, BACK and
-//    swipes are the whole vocabulary. So swipes adjust values, SELECT confirms.
+// INPUT MAP (the user chose this explicitly; do not "improve" it):
+//   swipe up / down    move to the previous / next SET
+//   tap (or SELECT)    show info about the current EXERCISE
+//   BACK (bottom)      log the set and advance
+//   hold (menu)        options: view workout, adjust weight/reps, info, skip, finish
+//   during rest        BACK / tap end the rest; swipe adds or removes 15s
+//   AMRAP reps step    swipe adjusts the reps, BACK logs the set
 //
-// Screens: ProgramPicker -> DayPicker -> SetView (with a rest mode and an AMRAP
-// "how many reps?" mode) -> finish.
+// LAYOUT/INPUT RULES (each cost a hardware cycle):
+//  - ROUND 360x360: the square's corners are behind the bezel. Everything is
+//    centred, inside r=150, and long strings are shrunk by drawCentered().
+//  - Handlers MUST be on WatchUi.BehaviorDelegate (onSelect/onNextPage/
+//    onPreviousPage are declared there, not on InputDelegate).
+//  - Monkey C does NOT process \\uXXXX escapes - use plain ASCII in strings.
 
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
 import Toybox.WatchUi;
 
-// Liftosaur palette. Purple carries emphasis; everything secondary is grey so
-// the one number that matters stands out.
-const LIFT_PURPLE = 0x9B6EF3;
-const LIFT_PURPLE_BRIGHT = 0xC9B4FF;
-const LIFT_PURPLE_DIM = 0x4A3D73;
+// Liftosaur brand purple, sampled from the app icon.
+const LIFT_PURPLE = 0x8356F6;
+const LIFT_PURPLE_BRIGHT = 0xA98BFF;
+const LIFT_PURPLE_TRACK = 0x3A2C6E;
 const LIFT_TEXT = 0xFFFFFF;
 const LIFT_TEXT_DIM = 0x9A9AA2;
 
-// Usable half-width of the display at vertical offset dy from the centre.
+const RING_RADIUS = 150;
+const RING_WIDTH = 9;
+
 function safeHalfWidth(dc as Graphics.Dc, y as Number) as Number {
     var w = dc.getWidth();
     var h = dc.getHeight();
@@ -41,7 +44,6 @@ function safeHalfWidth(dc as Graphics.Dc, y as Number) as Number {
     return Math.sqrt((r * r) - (dy * dy)).toNumber();
 }
 
-// Centred text, shrinking a size when it would run into the bezel.
 function drawCentered(dc as Graphics.Dc, y as Number, text as String,
                       font as Graphics.FontType, color as Number) as Void {
     var usable = safeHalfWidth(dc, y);
@@ -59,33 +61,42 @@ function drawCentered(dc as Graphics.Dc, y as Number, text as String,
     dc.drawText(dc.getWidth() / 2, y, size, text, Graphics.TEXT_JUSTIFY_CENTER);
 }
 
-// A ring of dots around the edge - the Apple-Watch progress gesture, drawn with
-// primitives that certainly exist (drawArc's argument order varies by SDK).
-// progress 0.0..1.0 fills clockwise from the top.
-function drawProgressRing(dc as Graphics.Dc, progress as Float,
-                          filled as Number, empty as Number) as Void {
+// A COMPLETE ring: a faded track all the way round, with the progress arc drawn
+// over it. Drawn before any text so it sits behind the numbers, not over them.
+function drawRing(dc as Graphics.Dc, progress as Float,
+                  trackColor as Number, arcColor as Number) as Void {
     var cx = dc.getWidth() / 2;
     var cy = dc.getHeight() / 2;
-    var r = 150;
-    var segs = 28;
-    for (var i = 0; i < segs; i++) {
-        var frac = i.toFloat() / segs;
-        var ang = (frac * 2.0 * Math.PI) - (Math.PI / 2.0);
-        var x = (cx + (Math.cos(ang) * r)).toNumber();
-        var y = (cy + (Math.sin(ang) * r)).toNumber();
-        dc.setColor(frac <= progress ? filled : empty, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(x, y, 3);
+    dc.setPenWidth(RING_WIDTH);
+    dc.setColor(trackColor, Graphics.COLOR_TRANSPARENT);
+    dc.drawCircle(cx, cy, RING_RADIUS);
+
+    if (progress > 0.0) {
+        if (progress > 1.0) { progress = 1.0; }
+        // drawCircle cannot do a partial arc, and drawArc's argument order varies
+        // between SDK versions, so the arc is short line segments.
+        var segs = 72;
+        var upto = (progress * segs).toNumber();
+        dc.setColor(arcColor, Graphics.COLOR_TRANSPARENT);
+        for (var i = 0; i < upto; i++) {
+            var a0 = (i.toFloat() / segs) * 2.0 * Math.PI - (Math.PI / 2.0);
+            var a1 = ((i + 1).toFloat() / segs) * 2.0 * Math.PI - (Math.PI / 2.0);
+            dc.drawLine((cx + (Math.cos(a0) * RING_RADIUS)).toNumber(),
+                        (cy + (Math.sin(a0) * RING_RADIUS)).toNumber(),
+                        (cx + (Math.cos(a1) * RING_RADIUS)).toNumber(),
+                        (cy + (Math.sin(a1) * RING_RADIUS)).toNumber());
+        }
     }
+    dc.setPenWidth(1);
 }
 
-// ---------------------------------------------------------------- list picker
+// ------------------------------------------------------------------ list picker
 
-// Shared by the program picker and the day picker: a title, one focal item and
-// a swipe hint. mode picks which list it reads.
+// Program / day chooser. mode selects which list it reads.
 class ListPickerView extends WatchUi.View {
 
     private var _c;
-    private var _mode;   // "program" | "day"
+    private var _mode;
 
     function initialize(c as WorkoutController, mode as String) {
         View.initialize();
@@ -102,37 +113,35 @@ class ListPickerView extends WatchUi.View {
         var idx = _mode.equals("program") ? _c.selectedProgramIndex()
                                           : _c.selectedDay();
         if (n == 0) {
-            // Nothing loaded yet: say so rather than showing an empty screen.
             drawCentered(dc, c0 - 30, "NO PLAN", Graphics.FONT_MEDIUM, LIFT_TEXT);
             drawCentered(dc, c0 + 16, "check the backend", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
             return;
         }
 
+        var frac = (idx + 1).toFloat() / n.toFloat();
+        drawRing(dc, frac, LIFT_PURPLE_TRACK, LIFT_PURPLE);
         drawCentered(dc, c0 - 118, _mode.equals("program") ? "PROGRAM" : "DAY",
-                     Graphics.FONT_XTINY, LIFT_PURPLE);
+                     Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
         drawCentered(dc, c0 - 96, (idx + 1) + " of " + n, Graphics.FONT_XTINY,
                      LIFT_TEXT_DIM);
 
         if (_mode.equals("program")) {
-            var name = _c.programLabel(idx);
-            drawCentered(dc, c0 - 14, name, Graphics.FONT_SMALL, LIFT_TEXT);
-            drawCentered(dc, c0 + 34, "swipe to change", Graphics.FONT_XTINY,
-                         LIFT_TEXT_DIM);
+            drawCentered(dc, c0 - 14, _c.programLabel(idx), Graphics.FONT_SMALL,
+                         LIFT_TEXT);
         } else {
             drawCentered(dc, c0 - 52, _c.dayName(idx), Graphics.FONT_MEDIUM,
                          LIFT_TEXT);
             drawCentered(dc, c0 + 2, _c.daySectionLabel(idx), Graphics.FONT_XTINY,
                          LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 + 46,
-                         _c.dayExerciseCount(idx) + " exercises - " +
+                         _c.dayExerciseCount(idx) + " exercises  " +
                          _c.daySetCount(idx) + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
         }
-
-        drawCentered(dc, c0 + 108, "swipe   select = " +
+        drawCentered(dc, c0 + 96, "swipe   back = " +
                      (_mode.equals("program") ? "choose" : "start"),
-                     Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
     }
 }
 
@@ -162,9 +171,7 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
     function onPreviousPage() as Boolean {
         if (_mode.equals("program")) {
             var n = _c.programCount();
-            if (n > 0) {
-                _c.selectProgramIndex((_c.selectedProgramIndex() + n - 1) % n);
-            }
+            if (n > 0) { _c.selectProgramIndex((_c.selectedProgramIndex() + n - 1) % n); }
         } else {
             var m = _c.dayCount();
             if (m > 0) { _c.selectDay((_c.selectedDay() + m - 1) % m); }
@@ -173,13 +180,21 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
+    // BACK is the affirmative action on this device's layout.
+    function onBack() as Boolean {
+        return choose();
+    }
+
     function onSelect() as Boolean {
+        return choose();
+    }
+
+    private function choose() as Boolean {
         if (_mode.equals("program")) {
             _c.chooseSelectedProgram();
-            _c.reloadPlan();          // pull the newly chosen program's plan
+            _c.reloadPlan();
             WatchUi.pushView(new ListPickerView(_c, "day"),
-                             new ListPickerDelegate(_c, "day"),
-                             WatchUi.SLIDE_LEFT);
+                             new ListPickerDelegate(_c, "day"), WatchUi.SLIDE_LEFT);
             return true;
         }
         _c.startWorkout();
@@ -188,7 +203,7 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
     }
 }
 
-// ------------------------------------------------------------------ set view
+// ------------------------------------------------------------------- set view
 
 class SetView extends WatchUi.View {
 
@@ -199,11 +214,9 @@ class SetView extends WatchUi.View {
         _c = c;
     }
 
-    // Filled ring = progress through the session's sets.
     private function progress() as Float {
         var total = _c.setsTotal();
-        if (total <= 0) { return 0.0; }
-        return _c.setsDone().toFloat() / total.toFloat();
+        return total <= 0 ? 0.0 : _c.setsDone().toFloat() / total.toFloat();
     }
 
     function onUpdate(dc as Graphics.Dc) as Void {
@@ -211,64 +224,66 @@ class SetView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
 
-        // ---- rest: the only thing that matters is the clock
+        // ---- rest
         if (_c.isResting()) {
-            var left = _c.restRemaining().toFloat();
             var total = _c.restTotal();
-            var frac = (total > 0) ? (left / total.toFloat()) : 0.0;
-            drawProgressRing(dc, frac, LIFT_PURPLE_BRIGHT, LIFT_PURPLE_DIM);
-            drawCentered(dc, c0 - 96, "REST", Graphics.FONT_XTINY, LIFT_PURPLE);
-            drawCentered(dc, c0 - 22, _c.restRemaining().format("%d"),
+            var frac = total > 0 ? _c.restRemaining().toFloat() / total.toFloat() : 0.0;
+            drawRing(dc, frac, LIFT_PURPLE_TRACK, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 100, "REST", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 24, _c.restRemaining().format("%d"),
                          Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
-            drawCentered(dc, c0 + 34, "of " + total + "s", Graphics.FONT_XTINY,
+            drawCentered(dc, c0 + 32, "of " + total + "s", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 104, "select = skip rest", Graphics.FONT_XTINY,
-                         LIFT_PURPLE_BRIGHT);
-            drawCentered(dc, c0 + 128, "swipe = +/- 15s", Graphics.FONT_XTINY,
-                         LIFT_PURPLE_DIM);
-            return;
-        }
-
-        // ---- AMRAP: ask how many reps were actually completed
-        if (_c.isAwaitingReps()) {
-            drawProgressRing(dc, progress(), LIFT_PURPLE, LIFT_PURPLE_DIM);
-            drawCentered(dc, c0 - 96, "REPS DONE", Graphics.FONT_XTINY, LIFT_PURPLE);
-            drawCentered(dc, c0 - 20, _c.currentReps().format("%d"),
-                         Graphics.FONT_NUMBER_MEDIUM, LIFT_PURPLE_BRIGHT);
-            drawCentered(dc, c0 + 36, "target " + _c.currentReps() + "+",
+            drawCentered(dc, c0 + 92, "back = skip   swipe = +/-15s",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 104, "swipe = reps   select = log",
-                         Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
             return;
         }
 
-        // ---- session complete
+        // ---- AMRAP: the reps actually completed drive 5/3/1 progression
+        if (_c.isAwaitingReps()) {
+            drawRing(dc, progress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+            drawCentered(dc, c0 - 100, "REPS DONE", Graphics.FONT_XTINY,
+                         LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 24, _c.currentReps().format("%d"),
+                         Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
+            drawCentered(dc, c0 + 32, "swipe to change", Graphics.FONT_XTINY,
+                         LIFT_TEXT_DIM);
+            drawCentered(dc, c0 + 92, "back = log set", Graphics.FONT_XTINY,
+                         LIFT_PURPLE_BRIGHT);
+            return;
+        }
+
+        // ---- done
         if (_c.isFinished()) {
-            drawProgressRing(dc, 1.0, LIFT_PURPLE_BRIGHT, LIFT_PURPLE_DIM);
-            drawCentered(dc, c0 - 46, "DONE", Graphics.FONT_MEDIUM, LIFT_TEXT);
-            drawCentered(dc, c0 + 2, _c.setsDone() + " of " + _c.setsTotal() + " sets",
+            drawRing(dc, 1.0, LIFT_PURPLE_TRACK, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 56, "DONE", Graphics.FONT_MEDIUM, LIFT_TEXT);
+            drawCentered(dc, c0 - 12, _c.setsDone() + " of " + _c.setsTotal() + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             if (!_c.activityNote().equals("")) {
-                drawCentered(dc, c0 + 32, _c.activityNote(), Graphics.FONT_XTINY,
-                             LIFT_PURPLE);
+                drawCentered(dc, c0 + 16, _c.activityNote(), Graphics.FONT_XTINY,
+                             LIFT_PURPLE_BRIGHT);
             }
-            drawCentered(dc, c0 + 104, "select = finish & save", Graphics.FONT_XTINY,
-                         LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 + 92, "hold = options", Graphics.FONT_XTINY,
+                         LIFT_TEXT_DIM);
             return;
         }
 
-        // ---- the working screen: exercise, weight, reps. Nothing else.
-        drawProgressRing(dc, progress(), LIFT_PURPLE, LIFT_PURPLE_DIM);
-        drawCentered(dc, c0 - 62, _c.currentExerciseName(), Graphics.FONT_SMALL,
+        // ---- the working screen
+        drawRing(dc, progress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 66, _c.currentExerciseName(), Graphics.FONT_SMALL,
                      LIFT_TEXT_DIM);
-        drawCentered(dc, c0 - 8, _c.currentWeight().format("%d"),
+        drawCentered(dc, c0 - 12, _c.currentWeight().format("%d"),
                      Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
-        drawCentered(dc, c0 + 40,
+        drawCentered(dc, c0 + 36,
                      "lb x " + _c.currentReps().format("%d") +
                      (_c.currentAmrap() ? "+" : ""),
                      Graphics.FONT_MEDIUM, LIFT_PURPLE_BRIGHT);
-        drawCentered(dc, c0 + 112, "swipe = weight   select = done",
-                     Graphics.FONT_XTINY, LIFT_PURPLE_DIM);
+        drawCentered(dc, c0 + 74,
+                     "set " + _c.currentSetNumber() + " of " +
+                     _c.currentExerciseSetCount(),
+                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        drawCentered(dc, c0 + 112, "back = log   tap = info   swipe = set",
+                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
     }
 }
 
@@ -281,8 +296,8 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         _c = c;
     }
 
-    function onSelect() as Boolean {
-        // Order matters: resting must NOT fall through to logging a set.
+    // BACK is the primary action: log the set and advance.
+    function onBack() as Boolean {
         if (_c.isResting()) { _c.skipRest(); return true; }
         if (_c.isAwaitingReps()) { _c.confirmReps(); return true; }
         if (_c.isFinished()) { _c.finishWorkout(); return true; }
@@ -290,32 +305,18 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
-    // BACK steps back a set (un-logging it, so it can be redone). At the start of
-    // the workout it falls through to the default, which leaves the view.
-    function onBack() as Boolean {
+    // Tap (or the SELECT button) opens the exercise info screen.
+    function onSelect() as Boolean {
         if (_c.isResting()) { _c.skipRest(); return true; }
-        if (_c.isAwaitingReps()) { _c.confirmReps(); return true; }
-        if (_c.canGoBack()) { _c.previousSet(); return true; }
-        return false;
-    }
-
-    // Long-press SELECT opens the menu on Garmin devices; this is where forward
-    // navigation lives, because swipes are already spoken for by weight/reps.
-    function onMenu() as Boolean {
-        var menu = new WatchUi.Menu2({ :title => "Workout" });
-        menu.addItem(new WatchUi.MenuItem("Next set", null, "next", null));
-        menu.addItem(new WatchUi.MenuItem("Previous set", null, "prev", null));
-        menu.addItem(new WatchUi.MenuItem("Skip to next exercise", null, "skipex", null));
-        menu.addItem(new WatchUi.MenuItem("Finish & save", null, "finish", null));
-        WatchUi.pushView(menu, new SetMenuDelegate(_c), WatchUi.SLIDE_UP);
+        WatchUi.pushView(new ExerciseInfoView(_c), new InfoDelegate(_c),
+                         WatchUi.SLIDE_LEFT);
         return true;
     }
 
     function onNextPage() as Boolean {
-        // During rest, swipe adds time; otherwise it adjusts the value on screen.
         if (_c.isResting()) { _c.startRest(_c.restRemaining() + 15); }
         else if (_c.isAwaitingReps()) { _c.adjustReps(1); }
-        else { _c.adjustWeight(5); }
+        else { _c.stepForward(); }
         WatchUi.requestUpdate();
         return true;
     }
@@ -323,8 +324,20 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
     function onPreviousPage() as Boolean {
         if (_c.isResting()) { _c.startRest(_c.restRemaining() - 15); }
         else if (_c.isAwaitingReps()) { _c.adjustReps(-1); }
-        else { _c.adjustWeight(-5); }
+        else if (_c.canGoBack()) { _c.previousSet(); }
         WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onMenu() as Boolean {
+        var menu = new WatchUi.Menu2({ :title => "Workout" });
+        menu.addItem(new WatchUi.MenuItem("View workout", null, "list", null));
+        menu.addItem(new WatchUi.MenuItem("Exercise info", null, "info", null));
+        menu.addItem(new WatchUi.MenuItem("Adjust weight", null, "weight", null));
+        menu.addItem(new WatchUi.MenuItem("Adjust reps", null, "reps", null));
+        menu.addItem(new WatchUi.MenuItem("Skip to next exercise", null, "skipex", null));
+        menu.addItem(new WatchUi.MenuItem("Finish & save", null, "finish", null));
+        WatchUi.pushView(menu, new SetMenuDelegate(_c), WatchUi.SLIDE_UP);
         return true;
     }
 }
@@ -340,15 +353,247 @@ class SetMenuDelegate extends WatchUi.Menu2InputDelegate {
 
     function onSelect(item as WatchUi.MenuItem) as Void {
         var id = item.getId();
-        if (id.equals("next")) {
-            _c.stepForward();
-        } else if (id.equals("prev")) {
-            if (_c.canGoBack()) { _c.previousSet(); }
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
+        if (id.equals("list")) {
+            WatchUi.pushView(new ExerciseListView(_c), new ExerciseListDelegate(_c),
+                             WatchUi.SLIDE_LEFT);
+        } else if (id.equals("info")) {
+            WatchUi.pushView(new ExerciseInfoView(_c), new InfoDelegate(_c),
+                             WatchUi.SLIDE_LEFT);
+        } else if (id.equals("weight")) {
+            WatchUi.pushView(new AdjustView(_c, "weight"), new AdjustDelegate(_c, "weight"),
+                             WatchUi.SLIDE_LEFT);
+        } else if (id.equals("reps")) {
+            WatchUi.pushView(new AdjustView(_c, "reps"), new AdjustDelegate(_c, "reps"),
+                             WatchUi.SLIDE_LEFT);
         } else if (id.equals("skipex")) {
             _c.skipExercise();
         } else if (id.equals("finish")) {
             _c.finishWorkout();
         }
+    }
+}
+
+// ------------------------------------------------------------------ adjust view
+
+// Where weight and reps are edited now that swipes navigate sets.
+class AdjustView extends WatchUi.View {
+
+    private var _c;
+    private var _mode;
+
+    function initialize(c as WorkoutController, mode as String) {
+        View.initialize();
+        _c = c;
+        _mode = mode;
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        var isWeight = _mode.equals("weight");
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 100, isWeight ? "WEIGHT" : "REPS",
+                     Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 - 24,
+                     (isWeight ? _c.currentWeight() : _c.currentReps()).format("%d"),
+                     Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
+        drawCentered(dc, c0 + 30, isWeight ? "lb" : "reps", Graphics.FONT_XTINY,
+                     LIFT_TEXT_DIM);
+        if (!isWeight) {
+            drawCentered(dc, c0 + 52, "target " + _c.plannedReps() +
+                         (_c.currentAmrap() ? "+" : ""),
+                         Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        }
+        drawCentered(dc, c0 + 96, "swipe = adjust   back = done",
+                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+    }
+}
+
+class AdjustDelegate extends WatchUi.BehaviorDelegate {
+
+    private var _c;
+    private var _mode;
+
+    function initialize(c as WorkoutController, mode as String) {
+        BehaviorDelegate.initialize();
+        _c = c;
+        _mode = mode;
+    }
+
+    function onNextPage() as Boolean {
+        if (_mode.equals("weight")) { _c.adjustWeight(5); } else { _c.adjustReps(1); }
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onPreviousPage() as Boolean {
+        if (_mode.equals("weight")) { _c.adjustWeight(-5); } else { _c.adjustReps(-1); }
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onBack() as Boolean {
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+        return true;
+    }
+}
+
+// ---------------------------------------------------------------- exercise list
+
+class ExerciseListView extends WatchUi.View {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        View.initialize();
+        _c = c;
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 96, "WORKOUT", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 - 40, _c.dayName(_c.selectedDay()), Graphics.FONT_SMALL,
+                     LIFT_TEXT);
+        drawCentered(dc, c0 + 4, _c.currentExercises().size() + " exercises",
+                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        drawCentered(dc, c0 + 52, "hold = list", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+    }
+}
+
+class ExerciseListDelegate extends WatchUi.BehaviorDelegate {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        BehaviorDelegate.initialize();
+        _c = c;
+    }
+
+    // The list itself is a Menu2 (built on entry); opening it from any input
+    // keeps this delegate trivially simple.
+    private function openList() as Boolean {
+        var menu = new WatchUi.Menu2({ :title => _c.dayName(_c.selectedDay()) });
+        var n = _c.currentExercises().size();
+        for (var i = 0; i < n; i++) {
+            var sub = _c.exerciseIsDone(i) ? "done" : "";
+            if (i == _c.currentExerciseIndex()) { sub = sub.equals("done") ? "done  now" : "now"; }
+            menu.addItem(new WatchUi.MenuItem(_c.exerciseNameAt(i), sub, i.toString(), null));
+        }
+        WatchUi.pushView(menu, new ExerciseJumpDelegate(_c), WatchUi.SLIDE_UP);
+        return true;
+    }
+
+    function onSelect() as Boolean { return openList(); }
+    function onMenu() as Boolean { return openList(); }
+    function onBack() as Boolean { return openList(); }
+}
+
+class ExerciseJumpDelegate extends WatchUi.Menu2InputDelegate {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        Menu2InputDelegate.initialize();
+        _c = c;
+    }
+
+    // Tap an exercise -> jump to it.
+    function onSelect(item as WatchUi.MenuItem) as Void {
+        var raw = item.getId();
+        var idx = (raw as String).toNumber();
         WatchUi.popView(WatchUi.SLIDE_DOWN);
+        if (idx != null) {
+            _c.jumpToExercise(idx);
+        }
+    }
+}
+
+// -------------------------------------------------------------------- info view
+
+class ExerciseInfoView extends WatchUi.View {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        View.initialize();
+        _c = c;
+        _c.requestExerciseInfo();   // previous session comes from the backend
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 104, _c.currentExerciseName(), Graphics.FONT_SMALL,
+                     LIFT_TEXT);
+        drawCentered(dc, c0 - 74, "today: " + _c.targetText(), Graphics.FONT_XTINY,
+                     LIFT_PURPLE_BRIGHT);
+        if (!_c.infoLoaded()) {
+            drawCentered(dc, c0 - 6, "loading last time...", Graphics.FONT_XTINY,
+                         LIFT_TEXT_DIM);
+        } else {
+            drawCentered(dc, c0 - 34, "LAST TIME " + _c.infoDateText(),
+                         Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            // the sets are the point of this screen: two short, centred lines
+            var sets = _c.infoSetsText();
+            var cut = sets.length() / 2;
+            var sp = sets.find(" ");
+            var second = "";
+            while (sp != null and sp < cut) {
+                var next = sets.find(" ", sp + 1);
+                if (next == null) { break; }
+                sp = next;
+            }
+            if (sets.length() > 26 and sp != null) {
+                second = sets.substring(sp + 1, sets.length());
+                sets = sets.substring(0, sp);
+            }
+            drawCentered(dc, c0 - 6, sets, Graphics.FONT_SMALL, LIFT_TEXT);
+            if (!second.equals("")) {
+                drawCentered(dc, c0 + 22, second, Graphics.FONT_SMALL, LIFT_TEXT);
+            }
+            drawCentered(dc, c0 + 56,
+                         _c.infoTopText() + "   " + _c.infoE1rmText(),
+                         Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        }
+        drawCentered(dc, c0 + 112, "back = return", Graphics.FONT_XTINY,
+                     LIFT_TEXT_DIM);
+    }
+}
+
+class InfoDelegate extends WatchUi.BehaviorDelegate {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        BehaviorDelegate.initialize();
+        _c = c;
+    }
+
+    function onBack() as Boolean {
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+        return true;
+    }
+
+    function onSelect() as Boolean {
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+        return true;
+    }
+
+    // swipe = move between sets, even from here
+    function onNextPage() as Boolean {
+        _c.stepForward(); WatchUi.popView(WatchUi.SLIDE_RIGHT); return true;
+    }
+
+    function onPreviousPage() as Boolean {
+        if (_c.canGoBack()) { _c.previousSet(); }
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+        return true;
     }
 }

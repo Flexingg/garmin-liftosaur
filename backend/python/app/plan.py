@@ -298,3 +298,84 @@ def get_plan(program_id: str = "current", force: bool = False) -> dict:
     plan = build_from_liftosaur(program_id)
     _CACHE[program_id] = (now, plan)
     return plan
+
+# ------------------------------------------------------------- exercise history
+
+
+def _parse_sets(notation: str) -> list[dict]:
+    """Parse "3x8 185lb, 1x6 185lb" into per-set dicts (expanding the groups).
+
+    Handles the unilateral "3x8|8 100lb" form too, and kg.
+    """
+    out: list[dict] = []
+    for chunk in notation.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        m = re.match(r"(\d+)\s*x\s*(\d+)(?:\|(\d+))?\+?\s*(\d+(?:\.\d+)?)\s*(lb|kg)?",
+                     chunk)
+        if not m:
+            continue
+        n = int(m.group(1))
+        reps = int(m.group(2))
+        weight = float(m.group(4))
+        if m.group(5) == "kg":
+            weight *= 2.20462
+        for _ in range(n):
+            out.append({"reps": reps, "weight": round5(weight)})
+    return out
+
+
+def _epley_1rm(weight: float, reps: int) -> float:
+    """Epley estimate: w * (1 + reps/30). Good enough for a training hint."""
+    if weight <= 0 or reps <= 0:
+        return 0.0
+    return weight * (1.0 + reps / 30.0)
+
+
+def exercise_history(name: str, limit: int = 20) -> dict:
+    """The most recent logged sessions for one exercise.
+
+    Powers the watch's info screen: "what did I lift last time?" is the single
+    most useful number standing at the rack. get_history returns a JSON envelope
+    of records, each carrying a Liftohistory string.
+    """
+    raw = mcp_call("get_history", {"limit": str(limit)})
+    try:
+        records = json.loads(raw).get("records", [])
+    except (ValueError, AttributeError):
+        records = []
+    target = name_key(name)
+    sessions: list[dict] = []
+    for rec in records:
+        text = rec.get("text", "") if isinstance(rec, dict) else ""
+        date = ""
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("//"):
+                continue
+            if "/ exercises: {" in stripped:
+                date = stripped.split(" / ")[0].strip()
+                continue
+            if stripped.startswith("}") or " / " not in stripped:
+                continue
+            ex_name, _, rest = stripped.partition(" / ")
+            if name_key(ex_name) != target:
+                continue
+            # completed sets come first; warmup and target are separate sections
+            done = rest.split(" / target:")[0].split(" / warmup:")[0]
+            sets = _parse_sets(done)
+            if not sets:
+                continue
+            sessions.append({
+                "date": date,
+                "sets": sets,
+                "top_weight": max(s["weight"] for s in sets),
+                "volume": sum(s["weight"] * s["reps"] for s in sets),
+                "e1rm": round(max(_epley_1rm(s["weight"], s["reps"]) for s in sets)),
+            })
+    return {
+        "exercise": name,
+        "last": sessions[0] if sessions else None,
+        "recent": sessions[:5],
+    }

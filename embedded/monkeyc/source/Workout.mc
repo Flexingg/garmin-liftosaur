@@ -56,6 +56,7 @@ class WorkoutController {
     private var _activityNote;          // what happened to the Garmin activity
     private var _lapsAdded;
     private var _sessionStopped;
+    private var _info;                  // last fetched exercise history
 
     function initialize() {
         _days = LiftPlan.days();
@@ -93,6 +94,7 @@ class WorkoutController {
         _repsEditing = false;
         _activityNote = "";
         _lapsAdded = 0;
+        _info = null;
         _sessionStopped = false;
         _resetEditable();
     }
@@ -376,6 +378,121 @@ class WorkoutController {
     // BACK / menu navigation. Stepping back un-logs the set so it can be redone;
     // stepping forward via the menu skips WITHOUT logging (the user may have
     // switched exercises), which completeSet() deliberately does not do.
+    // ---- the exercise list (options -> View workout) ----
+    function exerciseNameAt(index as Number) as String {
+        var exs = currentExercises();
+        if (index < 0 or index >= exs.size()) { return "-"; }
+        return (exs[index] as Dictionary)[:name] as String;
+    }
+
+    function exerciseIsDone(index as Number) as Boolean {
+        var exs = currentExercises();
+        if (index < 0 or index >= exs.size()) { return false; }
+        var sets = (exs[index] as Dictionary)[:sets] as Array;
+        for (var j = 0; j < sets.size(); j++) {
+            if (!isLogged(index, j)) { return false; }
+        }
+        return sets.size() > 0;
+    }
+
+    function jumpToExercise(index as Number) as Void {
+        if (index < 0 or index >= currentExercises().size()) { return; }
+        _exIndex = index;
+        _setIndex = 0;
+        _awaitingReps = false;
+        save();
+        WatchUi.requestUpdate();
+    }
+
+    // ---- exercise info (previous session, from the backend) ----
+    function setExerciseInfo(dict as Dictionary or Null) as Void { _info = dict; }
+
+    function infoLoaded() as Boolean { return _info != null; }
+
+    // "5x120  3x140  1x155" — grouped, because that is how it scrolls by
+    function infoSetsText() as String {
+        if (_info == null) { return ""; }
+        var last = _info["last"];
+        if (!(last instanceof Dictionary)) { return "no previous session"; }
+        var sets = (last as Dictionary)["sets"];
+        if (!(sets instanceof Array)) { return ""; }
+        var out = "";
+        var prevW = -1;
+        var prevR = -1;
+        var run = 0;
+        for (var i = 0; i <= (sets as Array).size(); i++) {
+            var w = -1;
+            var r = -1;
+            if (i < (sets as Array).size()) {
+                var st = (sets as Array)[i] as Dictionary;
+                w = st["weight"] as Number;
+                r = st["reps"] as Number;
+            }
+            if (w == prevW and r == prevR) {
+                run++;
+            } else {
+                if (run > 0) {
+                    if (out.length() > 0) { out += "   "; }
+                    out += run + "x" + prevR + " @ " + prevW;
+                }
+                prevW = w; prevR = r; run = 1;
+            }
+        }
+        return out;
+    }
+
+    function infoDateText() as String {
+        if (_info == null) { return ""; }
+        var last = _info["last"];
+        if (!(last instanceof Dictionary)) { return ""; }
+        var d = (last as Dictionary)["date"];
+        if (!(d instanceof String)) { return ""; }
+        var s = d as String;
+        if (s.length() > 10) { return s.substring(0, 10); }
+        return s;
+    }
+
+    function infoTopText() as String {
+        if (_info == null) { return ""; }
+        var last = _info["last"];
+        if (!(last instanceof Dictionary)) { return ""; }
+        return "top " + ((last as Dictionary)["top_weight"] as Number) + " lb";
+    }
+
+    function infoE1rmText() as String {
+        if (_info == null) { return ""; }
+        var last = _info["last"];
+        if (!(last instanceof Dictionary)) { return ""; }
+        return "e1rm " + ((last as Dictionary)["e1rm"] as Number) + " lb";
+    }
+
+    // What the plan prescribes right now, for the info screen.
+    function targetText() as String {
+        return currentWeight() + " lb x " + currentReps() +
+               (currentAmrap() ? "+" : "") + "   rest " + currentRest() + "s";
+    }
+
+    // Session progress as a fraction, for the ring.
+    function setProgress() as Float {
+        var total = _setsTotal;
+        return total <= 0 ? 0.0 : _setsDone.toFloat() / total.toFloat();
+    }
+
+    // The reps the PROGRAM prescribed for this set (what _reps started as), so
+    // the adjust screen can show "target 5+" next to the edited value.
+    function plannedReps() as Number {
+        var exs = currentExercises();
+        if (_exIndex >= exs.size()) { return 0; }
+        var sets = (exs[_exIndex] as Dictionary)[:sets] as Array;
+        if (_setIndex >= sets.size()) { return 0; }
+        return (sets[_setIndex] as Dictionary)[:reps] as Number;
+    }
+
+    // Ask the backend for this exercise's previous session (info screen).
+    function requestExerciseInfo() as Void {
+        if (_comms != null) { _comms.fetchExerciseInfo(currentExerciseName()); }
+    }
+
     function canGoBack() as Boolean {
         return (_setIndex > 0) or (_exIndex > 0);
     }

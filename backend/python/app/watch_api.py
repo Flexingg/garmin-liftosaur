@@ -163,6 +163,15 @@ def watch_plan(section: str | None = None, program: str = "current") -> dict:
     return plan
 
 
+@router.get("/watch/exercise")
+def watch_exercise(name: str) -> dict:
+    """Last logged session for one exercise, for the watch's info screen."""
+    try:
+        return plan_mod.exercise_history(name)
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/watch/workout")
 def watch_workout(w: WorkoutIn) -> dict:
     """Write a finished workout into Liftosaur as a history record."""

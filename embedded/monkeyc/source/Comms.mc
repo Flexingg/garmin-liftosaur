@@ -20,6 +20,7 @@ import Toybox.Application;
 import Toybox.Communications;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.WatchUi;
 
 // Cloudflare quick tunnel in front of the backend (see docs/06). A quick tunnel
 // hostname changes when it restarts; swap this for a named tunnel on a real
@@ -155,6 +156,25 @@ class LiftComms {
             out.add({:name => dd["name"], :section => dd["section"], :exercises => exs});
         }
         return out;
+    }
+
+    // Previous session for one exercise, for the info screen.
+    function fetchExerciseInfo(name as String) as Void {
+        var url = LIFT_BACKEND + "/api/v1/watch/exercise?name=" + urlEncode(name);
+        Communications.makeWebRequest(url, null, {
+            :method => Communications.HTTP_REQUEST_METHOD_GET,
+            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
+        }, method(:onExerciseInfo));
+    }
+
+    function onExerciseInfo(responseCode as Number,
+                            data as Dictionary or String or Null) as Void {
+        if (responseCode == 200 and (data instanceof Dictionary)) {
+            _controller.setExerciseInfo(data as Dictionary);
+        } else {
+            _controller.setExerciseInfo(null);
+        }
+        WatchUi.requestUpdate();
     }
 
     // ----------------------------------------------------------------- workout

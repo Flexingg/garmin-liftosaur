@@ -185,3 +185,58 @@ def test_plan_returns_every_section_when_unfiltered(monkeypatch):
     r = client.get("/api/v1/watch/plan")
     assert r.status_code == 200
     assert len(r.json()["days"]) == 3
+
+
+# --- exercise history (the info screen's data) ------------------------------
+
+HISTORY_FIXTURE = (
+    '{"records":['
+    '{"id":1,"text":"2026-09-13 08:37:19 +00:00 / program: \\"P\\" / dayName: \\"Week 3 - Day 4\\"'
+    ' / week: 3 / dayInWeek: 4 / duration: 3809s / exercises: {\\n'
+    '  Overhead Press / 1x5 120lb, 1x3 140lb, 1x1 155lb, 2x10 95lb'
+    ' / warmup: 1x5 60lb / target: 1x5 120lb 180s\\n'
+    '  Reverse Lunge, Barbell / 3x8|8 100lb / target: 3x8 100lb 90s\\n'
+    '}"},'
+    '{"id":2,"text":"2026-09-10 07:56:00 +00:00 / program: \\"P\\" / dayName: \\"Day 1\\"'
+    ' / week: 2 / duration: 3000s / exercises: {\\n'
+    '  Squat, Barbell / 1x5 240lb, 1x3 275lb, 1x2 305lb / target: 1x5 240lb\\n'
+    '}"}'
+    ']}'
+)
+
+
+def test_exercise_history_reads_the_json_envelope(monkeypatch):
+    """get_history returns {"records":[{"text": <liftohistory>}]} - not raw text.
+    Getting this wrong silently reported "no previous session" for everything."""
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: HISTORY_FIXTURE)
+    h = plan_mod.exercise_history("Overhead Press")
+    last = h["last"]
+    assert last is not None
+    assert last["date"].startswith("2026-09-13")
+    # the 2x10 95lb group is expanded to individual sets
+    assert [(s["reps"], s["weight"]) for s in last["sets"]] == [
+        (5, 120), (3, 140), (1, 155), (10, 95), (10, 95)]
+    assert last["top_weight"] == 155
+    # Epley on 155x1 is 160
+    assert last["e1rm"] == 160
+
+
+def test_exercise_history_matches_names_without_punctuation(monkeypatch):
+    """Display names carry spaces/commas; the lookup must normalise them."""
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: HISTORY_FIXTURE)
+    assert plan_mod.exercise_history("Reverse Lunge, Barbell")["last"] is not None
+    assert plan_mod.exercise_history("Squat")["last"] is not None
+
+
+def test_exercise_history_handles_an_unknown_exercise(monkeypatch):
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: HISTORY_FIXTURE)
+    h = plan_mod.exercise_history("Nonexistent Lift")
+    assert h["last"] is None
+    assert h["recent"] == []
+
+
+def test_exercise_endpoint(monkeypatch):
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: HISTORY_FIXTURE)
+    r = client.get("/api/v1/watch/exercise", params={"name": "Squat"})
+    assert r.status_code == 200
+    assert r.json()["last"]["top_weight"] == 305
