@@ -25,7 +25,7 @@ The backend is therefore fronted by a **Cloudflare quick tunnel**, which gives a
 real, publicly trusted certificate with no account or DNS changes:
 
 ```
-liftosaur-backend.service   0.0.0.0:8008   the API
+garmin-liftosaur-backend.service   0.0.0.0:8008   the API
 liftosaur-tunnel.service    cloudflared    https://<random>.trycloudflare.com
 ```
 
