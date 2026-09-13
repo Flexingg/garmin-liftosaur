@@ -226,6 +226,30 @@ What to look at now, in order:
 without `/api/v1` silently produced requests to `/health` and `/sets`. The app now
 normalises whatever you type (`BackendClient.normalizeBase`).
 
+## 5c. The connect callback CANNOT be trusted  *(the real root cause)*
+
+Observed on hardware, and the finding that unblocked everything:
+
+```
+phone: central CONNECTED, gatt writes: 0
+watch: ble:scan, adv=8
+```
+
+Both cannot be true unless **`onConnectedStateChanged()` is never called** for a
+connection the system completed on its own. Every earlier round of this
+debugging assumed the callback would arrive, so the app sat in `scan` forever:
+no characteristic resolved, `emit()` skipped every frame, not one byte written.
+
+**Rule: never treat `onConnectedStateChanged` as the source of truth.** The app
+sweeps `BluetoothLowEnergy.getPairedDevices()` once a second and adopts any
+paired device that is `isConnected()` **and** whose `getService(ourUuid)` is
+non-null. The service test is what makes it safe: a phone bonded only for Garmin
+Connect is connected too, fails that test, and is correctly skipped.
+
+This also means the link was probably fine from the *first* successful pairing -
+the app simply never noticed it, which is why every "recovery" change made no
+difference to whether data flowed.
+
 ## 6. Android permissions
 
 `android/app/src/main/AndroidManifest.xml` declares `BLUETOOTH_ADVERTISE`,
