@@ -379,7 +379,7 @@ class _CompanionPageState extends State<CompanionPage> {
               '   central connected: ${ble?.centralConnected ?? false}'
               '${(ble?.centralConnects ?? 0) > 0 ? ' (${ble!.centralConnects}x)' : ''}'),
           Text('state: ${ble?.lastState ?? '-'}   '
-              'watch writes seen: ${(ble?.assembler.fragmentsReceived ?? 0) > 0 ? 'yes' : 'NO'}'),
+              'gatt writes: ${ble?.gattWrites ?? 0}  last char: ${ble?.lastWriteCharacteristic ?? "none"}'),
           Text('fragments: ${ble?.assembler.summary() ?? '-'}'),
           Text('buffer: ${_buffer.summary()}'),
           const SizedBox(height: 6),

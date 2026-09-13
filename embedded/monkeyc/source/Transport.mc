@@ -39,6 +39,10 @@ class LiftTransport {
         return 0;
     }
 
+    function writeStatusName() as String {
+        return "";
+    }
+
     function writeFails() as Number {
         return 0;
     }
@@ -153,6 +157,10 @@ class LiftTeeTransport extends LiftTransport {
     function writeFails() as Number {
         if (_parts.size() == 0) { return 0; }
         return _parts[0].writeFails();
+    }
+
+    function writeStatusName() as String {
+        return _parts[0].writeStatusName();
     }
 
     function skipped() as Number {

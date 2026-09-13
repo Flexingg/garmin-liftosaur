@@ -88,6 +88,11 @@ class LiftBleDelegate extends BluetoothLowEnergy.BleDelegate {
                                 status as BluetoothLowEnergy.Status) as Void {
         _owner.handleEncryption(device, status);
     }
+
+    function onProfileRegister(uuid as BluetoothLowEnergy.Uuid,
+                               status as BluetoothLowEnergy.Status) as Void {
+        _owner.handleProfileRegister(uuid, status);
+    }
 }
 
 class LiftBleTransport extends LiftTransport {
@@ -130,6 +135,11 @@ class LiftBleTransport extends LiftTransport {
     private var _resolveTries;
     private var _pairStartedMs;  // System.getTimer() at the last pairDevice
     private var _lastStatus;
+
+    // Result of registerProfile(), reported by onProfileRegister. If this is not
+    // STATUS_SUCCESS the app can never look up its service, so no characteristic
+    // will ever resolve and every frame is skipped - the exact silence we hit.
+    private var _profileStatus;
     private var _sawAdvertisers;
     private var _scanStartedMs;   // when the current scan began
     private var _scanRestarts;    // blind-scan recoveries
@@ -155,6 +165,8 @@ class LiftBleTransport extends LiftTransport {
         _resolveTries = 0;
         _pairStartedMs = 0;
         _lastStatus = 0;
+        // null = not yet reported; -1 also means pending.
+        _profileStatus = -1;
         _sawAdvertisers = 0;
         _scanStartedMs = 0;
         _scanRestarts = 0;
@@ -213,6 +225,33 @@ class LiftBleTransport extends LiftTransport {
     function isConnected() as Boolean { return _connected; }
     function isEncrypted() as Boolean { return _encrypted; }
     function lastWriteStatus() as Number { return _lastStatus; }
+
+    // -1 until the profile registration result arrives; STATUS_SUCCESS means the
+    // app may look up the service. Anything else is fatal to the link.
+    function profileStatus() as Number {
+        return _profileStatus == null ? -1 : _profileStatus;
+    }
+
+    // Short, decodable code for the last write status. The raw enum number is
+    // useless on a watch screen (and differs per SDK), so map it to something a
+    // human can act on: "wfail" = rejected write, "enc"/"auth" = the peer wants
+    // encryption/bonding, "toobig" = fragment exceeds what the MTU allows.
+    function writeStatusName() as String {
+        return LiftBleTransport.statusName(_lastStatus);
+    }
+
+    static function statusName(status as Number) as String {
+        if (status == BluetoothLowEnergy.STATUS_SUCCESS) { return "ok"; }
+        if (status == BluetoothLowEnergy.STATUS_WRITE_FAIL) { return "wfail"; }
+        if (status == BluetoothLowEnergy.STATUS_READ_FAIL) { return "rfail"; }
+        if (status == BluetoothLowEnergy.STATUS_GATT_INSUFFICIENT_AUTHENTICATION_FAIL) { return "auth"; }
+        if (status == BluetoothLowEnergy.STATUS_GATT_INSUFFICIENT_ENCRYPTION_FAIL) { return "enc"; }
+        if (status == BluetoothLowEnergy.STATUS_ENCRYPTION_BOND_FAIL) { return "bond"; }
+        if (status == BluetoothLowEnergy.STATUS_ENCRYPTION_PEER_KEYS_LOST) { return "keys"; }
+        if (status == BluetoothLowEnergy.STATUS_ENCRYPTION_SECURITY_INSUFFICIENT) { return "sec"; }
+        if (status == BluetoothLowEnergy.STATUS_NOT_ENOUGH_RESOURCES) { return "res"; }
+        return "?" + status;
+    }
     function advertisersSeen() as Number { return _sawAdvertisers; }
     function scanRestarts() as Number { return _scanRestarts; }
     function pairAttempts() as Number { return _pairAttempts; }
@@ -222,9 +261,16 @@ class LiftBleTransport extends LiftTransport {
     }
 
     // Compact on-screen state so the watch itself explains the link:
-    //   off | scan | waiting | no-svc | no-char | ready
+    //   off | prof-fail | scan | waiting | no-svc | no-char | ready
+    //
+    // prof-fail comes first: if the profile did not register, no service lookup
+    // can ever succeed, so every other state would be misleading.
     function statusLine() as String {
         if (!_started) { return "off"; }
+        if (_profileStatus != null &&
+            (_profileStatus as Number) != BluetoothLowEnergy.STATUS_SUCCESS) {
+            return "prof-fail";
+        }
         if (_data != null) { return "ready"; }      // we can write
         if (_pairedDevice != null) {
             if (_service == null) { return "no-svc"; }
@@ -361,10 +407,12 @@ class LiftBleTransport extends LiftTransport {
         var bytes = LiftBinary.encode(frame);
         var parts = LiftBinary.fragment(bytes, MAX_FRAGMENT_PAYLOAD);
         for (var i = 0; i < parts.size(); i++) {
-            // WRITE_TYPE_DEFAULT per docs/01: streaming must not wait on a
-            // response round-trip per fragment.
+            // WITH_RESPONSE, not DEFAULT: write-without-response produces no ATT
+            // response, so onCharacteristicWrite never fires and a GATT or
+            // encryption rejection stays INVISIBLE. That is why the failure was
+            // silent on hardware. One round-trip per fragment (~1-5/s) is free.
             _data.requestWrite(parts[i], {
-                :writeType => BluetoothLowEnergy.WRITE_TYPE_DEFAULT
+                :writeType => BluetoothLowEnergy.WRITE_TYPE_WITH_RESPONSE
             });
             _fragmentsSent++;
         }
@@ -495,5 +543,15 @@ class LiftBleTransport extends LiftTransport {
                               status as BluetoothLowEnergy.Status) as Void {
         _encrypted = (status == BluetoothLowEnergy.STATUS_SUCCESS);
         System.println("LiftBle: encryption status=" + status);
+    }
+
+    // Result of registerProfile(). Reported for each registered profile uuid.
+    // A non-success status means the app cannot look up the service at all, so
+    // every frame is skipped and the link looks "connected but mute".
+    function handleProfileRegister(uuid as BluetoothLowEnergy.Uuid,
+                                   status as BluetoothLowEnergy.Status) as Void {
+        _profileStatus = status;
+        System.println("LiftBle: profile register status=" + status +
+                       " (0 = STATUS_SUCCESS)");
     }
 }

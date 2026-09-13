@@ -69,7 +69,9 @@ class LiftView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_DK_GRAY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w/2, h/2 + 74, Graphics.FONT_XTINY,
                     "skip=" + skipped + " fail=" + fails + " try=" + tries +
-                    (restarts > 0 ? " rst=" + restarts : ""),
+                    (restarts > 0 ? " rst=" + restarts : "") +
+                    // Decodable reason for a rejected write, e.g. wr=enc.
+                    (fails > 0 ? " wr=" + _controller.getWriteStatusName() : ""),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         var drops = _controller.getDropped();

@@ -76,6 +76,7 @@ class RecordingController {
     function getTransportName() as String { return _transport.name(); }
     function getFramesSent() as Number   { return _transport.framesSent(); }
     function getWriteFails() as Number   { return _transport.writeFails(); }
+    function getWriteStatusName() as String { return _transport.writeStatusName(); }
     function getSkipped() as Number      { return _transport.skipped(); }
     function getAdvertisersSeen() as Number { return _transport.advertisersSeen(); }
     function getScanRestarts() as Number    { return _transport.scanRestarts(); }

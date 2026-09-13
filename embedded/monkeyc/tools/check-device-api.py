@@ -35,6 +35,14 @@ MODULES = [
 CALL_RE = re.compile(
     r"\b(" + "|".join(MODULES) + r")\.([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
+# Constant / enum references: Module.ALL_CAPS not followed by "(". These bypass
+# the call check above, which is exactly how `BluetoothLowEnergy.STATUS_BLE_QUEUE_FULL`
+# got through - that symbol belongs to Toybox.Communications, but it exists in the
+# device file, so only the *qualified* module check catches it. Restricted to
+# ALL_CAPS so type names (Status, Device, ScanResult) are not swept in.
+REF_RE = re.compile(
+    r"\b(" + "|".join(MODULES) + r")\.([A-Z_][A-Z0-9_]*)\b(?!\s*\()")
+
 SYMBOL_RE = re.compile(r'symbol="([A-Za-z_][A-Za-z0-9_]*)"')
 
 API_ROOTS = [
@@ -78,6 +86,9 @@ def scan_sources(source_dir: str) -> dict[tuple[str, str], list[str]]:
                     if stripped.startswith("//"):
                         continue
                     for m in CALL_RE.finditer(line):
+                        hits.setdefault((m.group(1), m.group(2)), []).append(
+                            f"{os.path.relpath(path, source_dir)}:{lineno}")
+                    for m in REF_RE.finditer(line):
                         hits.setdefault((m.group(1), m.group(2)), []).append(
                             f"{os.path.relpath(path, source_dir)}:{lineno}")
     return hits

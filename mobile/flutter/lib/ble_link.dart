@@ -83,6 +83,8 @@ class BlePeripheralFrameSource implements FrameSource {
 
   StreamSubscription<Uint8List>? _dataSub;
   StreamSubscription<int>? _mtuSub;
+  StreamSubscription<dynamic>? _writeSub;
+  StreamSubscription<bool>? _subStateSub;
   Timer? _poll;
 
   bool _running = false;
@@ -100,6 +102,16 @@ class BlePeripheralFrameSource implements FrameSource {
   /// How many times the platform dropped our advertisement and we put it back.
   int advertisingRecoveries = 0;
   static const int _maxAdvertisingRecoveries = 5;
+
+  /// Every GATT write the platform sees, whatever characteristic it targets.
+  /// This is deliberately broader than [onDataReceived], which only reports the
+  /// RX characteristic: if the watch writes and the bytes land on a different
+  /// characteristic, `onDataReceived` stays silent while the data is right there.
+  int gattWrites = 0;
+  String? lastWriteCharacteristic;
+  int lastWriteLength = 0;
+  int subscriptionChanges = 0;
+  bool centralSubscribed = false;
 
   BlePeripheralFrameSource({
     FlutterBlePeripheral? peripheral,
@@ -133,8 +145,32 @@ class BlePeripheralFrameSource implements FrameSource {
     try {
       // The MTU drives how many bytes the watch must put in one write; log it
       // because a small MTU is the usual cause of fragmentation surprises.
-      _mtuSub = _peripheral.onMtuChanged.listen((int mtu) => negotiatedMtu = mtu);
+      _mtuSub = _peripheral.onMtuChanged.listen((int mtu) {
+        negotiatedMtu = mtu;
+        _emitEvent('MTU changed to $mtu (max write payload ${mtu - 3})');
+      });
       _dataSub = _peripheral.onDataReceived.listen(_onFragment);
+
+      // Anything the central writes, on ANY characteristic.
+      _writeSub = _peripheral.onGattWrite.listen((w) {
+        gattWrites++;
+        final uuid = (w.characteristicUuid as String?) ?? '';
+        final data = (w.data as Uint8List?) ?? Uint8List(0);
+        lastWriteCharacteristic = uuid;
+        lastWriteLength = data.length;
+        final head = data.take(12).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+        _emitEvent('GATT WRITE #$gattWrites char=$uuid len=${data.length} '
+            'head=[$head]${uuid.toLowerCase() == kLiftDataUuid.toLowerCase() ? '' : '  <-- NOT our RX uuid'}');
+        // Feed it to the assembler too: better to decode from a write we did not
+        // nominally expect than to discard real data.
+        if (data.isNotEmpty) _onFragment(data);
+      });
+
+      _subStateSub = _peripheral.onSubscriptionChanged.listen((bool subscribed) {
+        subscriptionChanges++;
+        centralSubscribed = subscribed;
+        _emitEvent('subscription changed: $subscribed');
+      });
 
       final state = await _peripheral.start(
         advertiseData: const AdvertiseDataCore(
@@ -247,6 +283,10 @@ class BlePeripheralFrameSource implements FrameSource {
     _poll = null;
     await _dataSub?.cancel();
     _dataSub = null;
+    await _writeSub?.cancel();
+    _writeSub = null;
+    await _subStateSub?.cancel();
+    _subStateSub = null;
     await _mtuSub?.cancel();
     _mtuSub = null;
     try {
