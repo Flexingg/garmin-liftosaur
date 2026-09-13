@@ -568,6 +568,43 @@ class WorkoutController {
         return "top " + ((last as Dictionary)["top_weight"] as Number) + " lb";
     }
 
+    // One line per recent session: "09-10  5x240 3x275 2x305  top 305"
+    function infoRecentLines() as Array {
+        var out = [];
+        if (_info == null) { return out; }
+        var rec = _info["recent"];
+        if (!(rec instanceof Array)) { return out; }
+        for (var i = 0; i < (rec as Array).size(); i++) {
+            var r = (rec as Array)[i] as Dictionary;
+            var date = r["date"] as String;
+            if (date.length() > 10) { date = date.substring(5, 10); }
+            var sets = r["sets"] as Array;
+            var body = "";
+            var prevW = -1;
+            var prevR = -1;
+            var run = 0;
+            for (var j = 0; j <= sets.size(); j++) {
+                var w = -1;
+                var rp = -1;
+                if (j < sets.size()) {
+                    var st = sets[j] as Dictionary;
+                    w = st["weight"] as Number;
+                    rp = st["reps"] as Number;
+                }
+                if (w == prevW and rp == prevR) { run++; }
+                else {
+                    if (run > 0) {
+                        if (body.length() > 0) { body += " "; }
+                        body += run + "x" + prevR + " " + prevW;
+                    }
+                    prevW = w; prevR = rp; run = 1;
+                }
+            }
+            out.add(date + "  " + body);
+        }
+        return out;
+    }
+
     function infoVolumeText() as String {
         if (_info == null) { return ""; }
         var last = _info["last"];

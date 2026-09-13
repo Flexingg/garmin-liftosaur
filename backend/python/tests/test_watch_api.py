@@ -337,3 +337,35 @@ def test_week_selector_limits_an_entry():
     w4 = [d for d in plan_ if d["section"] == "Week 4"][0]
     names = [e["name"] for e in w4["exercises"]]
     assert "Accessory" not in names
+
+
+def test_workout_endpoint_accepts_the_payload_in_the_query_string(monkeypatch):
+    """The watch now sends NO body at all - the parameters-Dictionary path
+    crashed twice on the device ("Unexpected Type Error" at the makeWebRequest
+    call). The workout rides in the query string instead."""
+    seen = {}
+
+    def fake_mcp(name, args, **kw):
+        seen["text"] = args["text"]
+        return '{"id":999}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout",
+                    params={"payload": "Day 1|Week 1|5/3/1 BBB|4200;"
+                                       "Squat|220|5|0;Squat|285|6|1"})
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == 999
+    assert "Squat / 1x5 220lb, 1x6+ 285lb" in seen["text"]
+
+
+def test_query_payload_survives_url_escaping():
+    """| ; , + and spaces are escaped by the watch's urlEncode and must decode
+    back to the same compact payload."""
+    import urllib.parse
+    from app.watch_api import parse_compact
+    raw = "Day 1|Week 1|5/3/1 BBB|4200;Romanian Deadlift, Barbell|135|8|0"
+    escaped = urllib.parse.quote(raw, safe="")
+    decoded = urllib.parse.unquote(escaped)
+    w = parse_compact(decoded)
+    assert w.sets[0].exercise == "Romanian Deadlift, Barbell"
+    assert w.program == "5/3/1 BBB"

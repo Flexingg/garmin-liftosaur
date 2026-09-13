@@ -53,10 +53,16 @@ class LiftComms {
             var ch = s.substring(i, i + 1);
             if (ch.equals(" ")) {
                 out += "%20";
-            } else if (ch.equals("/") or ch.equals("?") or ch.equals("&") or ch.equals("#")) {
-                // Not expected in a section name; substitute so the URL stays
-                // well-formed rather than emitting a stray percent escape.
-                out += "_";
+            } else if (ch.equals("/") or ch.equals("?") or ch.equals("&") or ch.equals("#")
+                       or ch.equals("|") or ch.equals(";") or ch.equals(",") or ch.equals("+")) {
+                // Separators and reserved characters must be escaped now that the
+                // whole workout travels in the query string.
+                out += "%";
+                var code = ch.toNumber();
+                var hex = "0123456789ABCDEF";
+                var v = (code == null) ? 0 : code;
+                out += hex.substring((v / 16) % 16, ((v / 16) % 16) + 1);
+                out += hex.substring(v % 16, (v % 16) + 1);
             } else {
                 out += ch;
             }
@@ -180,18 +186,18 @@ class LiftComms {
     // ----------------------------------------------------------------- workout
 
     function postWorkout() as Void {
-        // makeWebRequest sends `parameters` as the POST body, and the docs are
-        // explicit that "these values must be URL encoded" - i.e. flat scalars.
-        // Passing a nested array of dictionaries threw Unexpected Type Error and
-        // killed the app on save. The workout goes as ONE compact string field.
+        // The POST body path crashed twice: makeWebRequest serialises
+        // `parameters` into the body and rejected both a nested dictionary and a
+        // flat symbol-keyed one with "Unexpected Type Error". So there is NO
+        // body: the workout rides in the query string and parameters stays null.
         var payload = _controller.outgoingPayload();
         if (payload == null or payload.equals("")) {
             System.println("Comms: nothing to post");
             return;
         }
-        System.println("Comms: POST " + LIFT_BACKEND + "/api/v1/watch/workout");
-        Communications.makeWebRequest(LIFT_BACKEND + "/api/v1/watch/workout",
-            {:payload => payload}, {
+        var url = LIFT_BACKEND + "/api/v1/watch/workout?payload=" + urlEncode(payload);
+        System.println("Comms: POST (query) " + url);
+        Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_POST,
             :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
         }, method(:onPostResponse));

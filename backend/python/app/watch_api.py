@@ -200,7 +200,7 @@ def parse_compact(text: str) -> WorkoutIn:
 
 
 @router.post("/watch/workout")
-async def watch_workout(request: Request) -> dict:
+async def watch_workout(request: Request, payload: str | None = None) -> dict:
     """Write a finished workout into Liftosaur as a history record.
 
     Accepts a JSON body (curl, the build tool, tests) AND the form-encoded
@@ -208,7 +208,14 @@ async def watch_workout(request: Request) -> dict:
     so the watch ships the workout as one compact string.
     """
     ctype = (request.headers.get("content-type") or "").lower()
-    if "json" in ctype:
+    if payload:
+        # The watch sends the workout in the QUERY STRING with no body at all:
+        # the parameters-Dictionary path crashed twice on the device.
+        try:
+            w = parse_compact(payload)
+        except (ValueError, IndexError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    elif "json" in ctype:
         try:
             w = WorkoutIn(**(await request.json()))
         except (ValueError, TypeError) as exc:

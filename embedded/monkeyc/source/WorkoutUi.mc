@@ -22,6 +22,7 @@
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.Math;
+import Toybox.System;
 import Toybox.WatchUi;
 
 // Liftosaur brand purple, sampled from the app icon.
@@ -33,6 +34,22 @@ const LIFT_TEXT_DIM = 0x9A9AA2;
 
 const RING_RADIUS = 150;
 const RING_WIDTH = 9;
+
+// Long exercise names scroll slowly instead of being truncated: "Romanian
+// Deadlift, Barbell" does not fit at FONT_SMALL on a round 360px screen.
+// Driven by the clock rather than a Timer, so it animates whenever the screen
+// repaints and costs nothing when it does not.
+function marquee(text as String) as String {
+    if (text.length() <= 18) { return text; }
+    var span = 18;
+    var ticks = (text.length() - span) + 6;   // includes a pause at each end
+    var pos = (System.getTimer() / 400) % (ticks * 2);
+    if (pos > ticks) { pos = (ticks * 2) - pos; }
+    var start = pos > span ? pos - span : 0;
+    if (start + span > text.length()) { start = text.length() - span; }
+    if (start < 0) { start = 0; }
+    return text.substring(start, start + span);
+}
 
 function safeHalfWidth(dc as Graphics.Dc, y as Number) as Number {
     var w = dc.getWidth();
@@ -139,9 +156,7 @@ class ListPickerView extends WatchUi.View {
                          _c.daySetCount(idx) + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
         }
-        drawCentered(dc, c0 + 96, "swipe   back = " +
-                     (_mode.equals("program") ? "choose" : "start"),
-                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        
     }
 }
 
@@ -234,8 +249,14 @@ class SetView extends WatchUi.View {
                          Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
             drawCentered(dc, c0 + 32, "of " + total + "s", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 92, "back = skip   swipe = +/-15s",
+            // What is coming, so the rest is a glanceable decision.
+            drawCentered(dc, c0 + 70, "next  " + _c.currentExerciseName(),
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            drawCentered(dc, c0 + 90,
+                         _c.currentWeight().format("%d") + " lb x " +
+                         _c.currentReps().format("%d") +
+                         (_c.currentAmrap() ? "+" : ""),
+                         Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
             return;
         }
 
@@ -248,8 +269,7 @@ class SetView extends WatchUi.View {
                          Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
             drawCentered(dc, c0 + 32, "swipe to change", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 92, "back = log set", Graphics.FONT_XTINY,
-                         LIFT_PURPLE_BRIGHT);
+            
             return;
         }
 
@@ -274,19 +294,19 @@ class SetView extends WatchUi.View {
 
         // ---- the working screen
         drawRing(dc, progress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
-        drawCentered(dc, c0 - 66, _c.currentExerciseName(), Graphics.FONT_SMALL,
-                     LIFT_TEXT_DIM);
-        drawCentered(dc, c0 - 12, _c.currentWeight().format("%d"),
+        // Name high, big number above the set line (no overlap), and no hint
+        // text at all - the user knows the controls and the tooltips were noise.
+        drawCentered(dc, c0 - 96, marquee(_c.currentExerciseName()),
+                     Graphics.FONT_SMALL, LIFT_TEXT_DIM);
+        drawCentered(dc, c0 - 34, _c.currentWeight().format("%d"),
                      Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
-        drawCentered(dc, c0 + 36,
+        drawCentered(dc, c0 + 14,
                      "lb x " + _c.currentReps().format("%d") +
                      (_c.currentAmrap() ? "+" : ""),
                      Graphics.FONT_MEDIUM, LIFT_PURPLE_BRIGHT);
-        drawCentered(dc, c0 + 74,
+        drawCentered(dc, c0 + 52,
                      "set " + _c.currentSetNumber() + " of " +
                      _c.currentExerciseSetCount(),
-                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
-        drawCentered(dc, c0 + 112, "back = log   tap = info   swipe = set",
                      Graphics.FONT_XTINY, LIFT_TEXT_DIM);
     }
 }
@@ -350,18 +370,56 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
+    // Swipes, as specified:
+    //   right->left  next set        left->right   previous set
+    //   top->bottom  history view    bottom->top   stats view
+    // Vertical swipes may ALSO arrive as onNextPage/onPreviousPage, so both
+    // paths call the same helpers behind a short guard - otherwise one swipe
+    // would move two sets.
+    private var _lastNavMs;
+
+    private function guarded() as Boolean {
+        var now = System.getTimer();
+        if (_lastNavMs != null and (now - _lastNavMs) < 250) { return false; }
+        _lastNavMs = now;
+        return true;
+    }
+
+    function onSwipe(evt as WatchUi.SwipeEvent) as Boolean {
+        if (!guarded()) { return true; }
+        var dir = evt.getDirection();
+        if (dir == WatchUi.SWIPE_LEFT) { _c.advance(); }
+        else if (dir == WatchUi.SWIPE_RIGHT) { if (_c.canGoBack()) { _c.previousSet(); } }
+        else if (dir == WatchUi.SWIPE_DOWN) { openHistory(); }
+        else if (dir == WatchUi.SWIPE_UP) { openStats(); }
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    private function openHistory() as Void {
+        WatchUi.pushView(new ExerciseHistoryView(_c), new InfoDelegate(_c),
+                         WatchUi.SLIDE_LEFT);
+    }
+
+    private function openStats() as Void {
+        WatchUi.pushView(new ExerciseStatsView(_c), new InfoDelegate(_c),
+                         WatchUi.SLIDE_LEFT);
+    }
+
     function onNextPage() as Boolean {
+        if (!guarded()) { return true; }
         if (_c.isResting()) { _c.startRest(_c.restRemaining() + 15); }
         else if (_c.isAwaitingReps()) { _c.adjustReps(1); }
-        else { _c.stepForward(); }
+        else { openStats(); }
         WatchUi.requestUpdate();
         return true;
     }
 
     function onPreviousPage() as Boolean {
+        if (!guarded()) { return true; }
         if (_c.isResting()) { _c.startRest(_c.restRemaining() - 15); }
         else if (_c.isAwaitingReps()) { _c.adjustReps(-1); }
-        else if (_c.canGoBack()) { _c.previousSet(); }
+        else { openHistory(); }
         WatchUi.requestUpdate();
         return true;
     }
@@ -412,8 +470,8 @@ class AdjustView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
         drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
-        drawCentered(dc, c0 - 108, "EDIT SET", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
-        drawCentered(dc, c0 - 52, _c.currentWeight().format("%d") + " lb",
+        drawCentered(dc, c0 - 116, "EDIT SET", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 - 68, _c.currentWeight().format("%d") + " lb",
                      Graphics.FONT_NUMBER_MEDIUM,
                      isWeight ? LIFT_TEXT : LIFT_TEXT_DIM);
         drawCentered(dc, c0 + 4, _c.currentReps().format("%d") + " reps",
@@ -421,8 +479,7 @@ class AdjustView extends WatchUi.View {
                      isWeight ? LIFT_TEXT_DIM : LIFT_PURPLE_BRIGHT);
         drawCentered(dc, c0 + 52, isWeight ? "swiping: weight" : "swiping: reps",
                      Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
-        drawCentered(dc, c0 + 108, "tap = switch   back = done",
-                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        
     }
 }
 
@@ -558,6 +615,77 @@ class ExerciseInfoView extends WatchUi.View {
     }
 }
 
+// Swipe down: the exercise's recent sessions, stacked newest first.
+class ExerciseHistoryView extends WatchUi.View {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        View.initialize();
+        _c = c;
+        _c.requestExerciseInfo();
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL,
+                     LIFT_TEXT);
+        drawCentered(dc, c0 - 92, "HISTORY", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        if (!_c.infoLoaded()) {
+            drawCentered(dc, c0 - 10, "loading...", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            return;
+        }
+        var lines = _c.infoRecentLines();
+        if (lines.size() == 0) {
+            drawCentered(dc, c0 - 10, "no history yet", Graphics.FONT_XTINY,
+                         LIFT_TEXT_DIM);
+        }
+        for (var i = 0; i < lines.size() and i < 5; i++) {
+            drawCentered(dc, c0 - 60 + (i * 30), lines[i] as String,
+                         Graphics.FONT_XTINY,
+                         i == 0 ? LIFT_TEXT : LIFT_TEXT_DIM);
+        }
+    }
+}
+
+// Swipe up: the same numbers as the info page but WITHOUT the history.
+class ExerciseStatsView extends WatchUi.View {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        View.initialize();
+        _c = c;
+        _c.requestExerciseInfo();
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL,
+                     LIFT_TEXT);
+        drawCentered(dc, c0 - 92, "STATS", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 - 52, "target", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        drawCentered(dc, c0 - 28, _c.targetText(), Graphics.FONT_SMALL, LIFT_TEXT);
+        if (!_c.infoLoaded()) {
+            drawCentered(dc, c0 + 20, "loading...", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            return;
+        }
+        drawCentered(dc, c0 + 14, "best last time", Graphics.FONT_XTINY,
+                     LIFT_TEXT_DIM);
+        drawCentered(dc, c0 + 38, _c.infoTopText(), Graphics.FONT_SMALL, LIFT_TEXT);
+        drawCentered(dc, c0 + 70, _c.infoE1rmText(), Graphics.FONT_XTINY,
+                     LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 + 92, _c.infoVolumeText(), Graphics.FONT_XTINY,
+                     LIFT_TEXT_DIM);
+    }
+}
+
 class InfoDelegate extends WatchUi.BehaviorDelegate {
 
     private var _c;
@@ -577,13 +705,12 @@ class InfoDelegate extends WatchUi.BehaviorDelegate {
         return true;
     }
 
-    // swipe = move between sets, even from here
+    // Any swipe just returns: these are read-only pages now.
     function onNextPage() as Boolean {
-        _c.stepForward(); WatchUi.popView(WatchUi.SLIDE_RIGHT); return true;
+        WatchUi.popView(WatchUi.SLIDE_RIGHT); return true;
     }
 
     function onPreviousPage() as Boolean {
-        if (_c.canGoBack()) { _c.previousSet(); }
         WatchUi.popView(WatchUi.SLIDE_RIGHT);
         return true;
     }
