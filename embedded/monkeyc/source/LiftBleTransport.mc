@@ -145,6 +145,7 @@ class LiftBleTransport extends LiftTransport {
     private var _scanRestarts;    // blind-scan recoveries
     private var _pairAttempts;    // how many times we have paired
     private var _lastResolveMs;   // throttle for getService retries
+    private var _lastAdoptMs;     // throttle for the paired-device sweep
     private var _advAtScanStart;  // advertisement count when the scan began
     private var _blindGivenUp;    // stop cycling; keep listening
 
@@ -172,6 +173,7 @@ class LiftBleTransport extends LiftTransport {
         _scanRestarts = 0;
         _pairAttempts = 0;
         _lastResolveMs = 0;
+        _lastAdoptMs = 0;
         _advAtScanStart = 0;
         _blindGivenUp = false;
     }
@@ -322,6 +324,20 @@ class LiftBleTransport extends LiftTransport {
     function tick() as Void {
         if (!_started) { return; }
 
+        // The system can complete a connection WITHOUT ever calling
+        // onConnectedStateChanged(). Observed on hardware: the phone reported a
+        // connected central while this app still believed it was scanning, so it
+        // never resolved the characteristic and never wrote a byte. Never trust
+        // that callback alone - sweep the paired devices and adopt whichever one
+        // is connected AND actually exposes our service (a connected phone that
+        // is only bonded for Garmin Connect will fail that service test and is
+        // correctly skipped).
+        var adoptNow = System.getTimer();
+        if (_data == null && (adoptNow - _lastAdoptMs) > 1000) {
+            _lastAdoptMs = adoptNow;
+            adoptConnectedDevice();
+        }
+
         // Holding a paired device but no characteristic yet: keep trying. This
         // covers both "connected but discovery unfinished" and, importantly,
         // "the system never reported a connection to us at all".
@@ -432,6 +448,34 @@ class LiftBleTransport extends LiftTransport {
         }
         if (_service != null && _data == null) {
             _data = _service.getCharacteristic(LiftBle.dataUuid());
+        }
+    }
+
+    // Adopt a peer that the SYSTEM already connected, which this app was never
+    // told about. This is the fix for "phone says connected, watch says scan".
+    private function adoptConnectedDevice() as Void {
+        var paired = BluetoothLowEnergy.getPairedDevices();
+        var d = paired.next();
+        while (d != null) {
+            var dev = d as BluetoothLowEnergy.Device;
+            if (dev != null && dev.isConnected()) {
+                var svc = dev.getService(LiftBle.serviceUuid());
+                if (svc != null) {
+                    var ch = svc.getCharacteristic(LiftBle.dataUuid());
+                    if (ch != null) {
+                        _device = dev;
+                        _pairedDevice = dev;
+                        _service = svc;
+                        _data = ch;
+                        _connected = true;
+                        _resolveTries = 0;
+                        System.println("LiftBle: adopted a connected device; " +
+                                       "characteristic ready (no connect callback)");
+                        return;
+                    }
+                }
+            }
+            d = paired.next();
         }
     }
 
