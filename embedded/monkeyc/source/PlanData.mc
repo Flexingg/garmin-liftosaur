@@ -49,14 +49,14 @@ module LiftPlan {
             ]},
             {:name => "Day 2", :section => "Week 1", :exercises => [
                 {:name => "Bench Press", :rest => 180, :sets => [
-                    {:reps => 5, :weight => 75, :amrap => false, :rest => 180},
-                    {:reps => 5, :weight => 85, :amrap => false, :rest => 180},
-                    {:reps => 5, :weight => 100, :amrap => true, :rest => 180},
-                    {:reps => 10, :weight => 60, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 60, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 60, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 60, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 60, :amrap => false, :rest => 180},
+                    {:reps => 5, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 5, :weight => 195, :amrap => false, :rest => 180},
+                    {:reps => 5, :weight => 220, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
                 ]},
                 {:name => "Bent Over Row", :rest => 120, :sets => [
                     {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
@@ -108,19 +108,19 @@ module LiftPlan {
             ]},
             {:name => "Day 4", :section => "Week 1", :exercises => [
                 {:name => "Overhead Press", :rest => 180, :sets => [
-                    {:reps => 5, :weight => 105, :amrap => false, :rest => 180},
-                    {:reps => 5, :weight => 125, :amrap => false, :rest => 180},
-                    {:reps => 5, :weight => 140, :amrap => true, :rest => 180},
-                    {:reps => 10, :weight => 80, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 80, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 80, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 80, :amrap => false, :rest => 180},
-                    {:reps => 10, :weight => 80, :amrap => false, :rest => 180},
+                    {:reps => 5, :weight => 110, :amrap => false, :rest => 180},
+                    {:reps => 5, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 5, :weight => 145, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
                 ]},
                 {:name => "Reverse Lunge, Barbell", :rest => 90, :sets => [
-                    {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
                 ]},
                 {:name => "Chin Up", :rest => 90, :sets => [
                     {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
@@ -234,6 +234,384 @@ module LiftPlan {
                     {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
                 ]},
             ]},
+            {:name => "Day 1", :section => "Week 2", :exercises => [
+                {:name => "Squat", :rest => 180, :sets => [
+                    {:reps => 3, :weight => 235, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 270, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 300, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Romanian Deadlift, Barbell", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 135, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 135, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 135, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Chin Up", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Bench Dip", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 35, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 35, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 35, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Plank", :rest => 90, :sets => [
+                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                ]},
+            ]},
+            {:name => "Day 2", :section => "Week 2", :exercises => [
+                {:name => "Bench Press", :rest => 180, :sets => [
+                    {:reps => 3, :weight => 180, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 210, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 235, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Bent Over Row", :rest => 120, :sets => [
+                    {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Bulgarian Split Squat, Bodyweight", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Standing Calf Raise, Bodyweight", :rest => 60, :sets => [
+                    {:reps => 15, :weight => 55, :amrap => false, :rest => 60},
+                    {:reps => 15, :weight => 55, :amrap => false, :rest => 60},
+                    {:reps => 15, :weight => 55, :amrap => false, :rest => 60},
+                ]},
+            ]},
+            {:name => "Day 3", :section => "Week 2", :exercises => [
+                {:name => "Deadlift", :rest => 180, :sets => [
+                    {:reps => 3, :weight => 195, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 225, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 250, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Good Morning", :rest => 120, :sets => [
+                    {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
+                ]},
+            ]},
+            {:name => "Day 4", :section => "Week 2", :exercises => [
+                {:name => "Overhead Press", :rest => 180, :sets => [
+                    {:reps => 3, :weight => 120, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 135, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 155, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Reverse Lunge, Barbell", :rest => 90, :sets => [
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                ]},
+            ]},
+            {:name => "Day 5 - Light Pump (Wed)", :section => "Week 2", :exercises => [
+                {:name => "Upright Row, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Bicep Curl, Barbell", :rest => 60, :sets => [
+                    {:reps => 12, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 5, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Skullcrusher, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Reverse Curl, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Hanging Leg Raise", :rest => 60, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+            ]},
+            {:name => "Day 6 - Weekend Beast Mode", :section => "Week 2", :exercises => [
+                {:name => "Bench Press Close Grip", :rest => 120, :sets => [
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Pendlay Row", :rest => 120, :sets => [
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Front Squat", :rest => 120, :sets => [
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Shrug, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Bicep Curl, Barbell", :rest => 60, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Triceps Extension, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 5, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Ab Wheel", :rest => 60, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+            ]},
+            {:name => "Day 7 - Travel Bodyweight", :section => "Week 2", :exercises => [
+                {:name => "Push Up", :rest => 90, :sets => [
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Squat, Bodyweight", :rest => 90, :sets => [
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Glute Bridge", :rest => 60, :sets => [
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Pike Push Up", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Inverted Row", :rest => 90, :sets => [
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+            ]},
+            {:name => "Day 1", :section => "Week 3", :exercises => [
+                {:name => "Squat", :rest => 180, :sets => [
+                    {:reps => 5, :weight => 250, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 285, :amrap => false, :rest => 180},
+                    {:reps => 1, :weight => 320, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 170, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Romanian Deadlift, Barbell", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 135, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 135, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 135, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Chin Up", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Bench Dip", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 35, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 35, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 35, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Plank", :rest => 90, :sets => [
+                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                ]},
+            ]},
+            {:name => "Day 2", :section => "Week 3", :exercises => [
+                {:name => "Bench Press", :rest => 180, :sets => [
+                    {:reps => 5, :weight => 195, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 220, :amrap => false, :rest => 180},
+                    {:reps => 1, :weight => 245, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 130, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Bent Over Row", :rest => 120, :sets => [
+                    {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 110, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Bulgarian Split Squat, Bodyweight", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Standing Calf Raise, Bodyweight", :rest => 60, :sets => [
+                    {:reps => 15, :weight => 55, :amrap => false, :rest => 60},
+                    {:reps => 15, :weight => 55, :amrap => false, :rest => 60},
+                    {:reps => 15, :weight => 55, :amrap => false, :rest => 60},
+                ]},
+            ]},
+            {:name => "Day 3", :section => "Week 3", :exercises => [
+                {:name => "Deadlift", :rest => 180, :sets => [
+                    {:reps => 5, :weight => 210, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 240, :amrap => false, :rest => 180},
+                    {:reps => 1, :weight => 265, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 140, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Good Morning", :rest => 120, :sets => [
+                    {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
+                    {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
+                ]},
+            ]},
+            {:name => "Day 4", :section => "Week 3", :exercises => [
+                {:name => "Overhead Press", :rest => 180, :sets => [
+                    {:reps => 5, :weight => 130, :amrap => false, :rest => 180},
+                    {:reps => 3, :weight => 145, :amrap => false, :rest => 180},
+                    {:reps => 1, :weight => 160, :amrap => true, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                    {:reps => 10, :weight => 85, :amrap => false, :rest => 180},
+                ]},
+                {:name => "Reverse Lunge, Barbell", :rest => 90, :sets => [
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                ]},
+            ]},
+            {:name => "Day 5 - Light Pump (Wed)", :section => "Week 3", :exercises => [
+                {:name => "Upright Row, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Bicep Curl, Barbell", :rest => 60, :sets => [
+                    {:reps => 12, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 5, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Skullcrusher, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Reverse Curl, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 45, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Hanging Leg Raise", :rest => 60, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+            ]},
+            {:name => "Day 6 - Weekend Beast Mode", :section => "Week 3", :exercises => [
+                {:name => "Bench Press Close Grip", :rest => 120, :sets => [
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Pendlay Row", :rest => 120, :sets => [
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                    {:reps => 6, :weight => 145, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Front Squat", :rest => 120, :sets => [
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                    {:reps => 7, :weight => 5, :amrap => false, :rest => 120},
+                ]},
+                {:name => "Shrug, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 150, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Bicep Curl, Barbell", :rest => 60, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Triceps Extension, Barbell", :rest => 60, :sets => [
+                    {:reps => 10, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 5, :amrap => false, :rest => 60},
+                    {:reps => 10, :weight => 5, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Ab Wheel", :rest => 60, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+            ]},
+            {:name => "Day 7 - Travel Bodyweight", :section => "Week 3", :exercises => [
+                {:name => "Push Up", :rest => 90, :sets => [
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Squat, Bodyweight", :rest => 90, :sets => [
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Glute Bridge", :rest => 60, :sets => [
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 60},
+                    {:reps => 12, :weight => 0, :amrap => false, :rest => 60},
+                ]},
+                {:name => "Pike Push Up", :rest => 90, :sets => [
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+                {:name => "Inverted Row", :rest => 90, :sets => [
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                    {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
+                ]},
+            ]},
             {:name => "Day 1", :section => "Week 4 - Deload", :exercises => [
                 {:name => "Romanian Deadlift, Barbell", :rest => 90, :sets => [
                     {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
@@ -279,37 +657,12 @@ module LiftPlan {
                     {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
                     {:reps => 8, :weight => 65, :amrap => false, :rest => 120},
                 ]},
-                {:name => "Chin Up", :rest => 90, :sets => [
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                ]},
-                {:name => "Bench Dip", :rest => 90, :sets => [
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                ]},
-                {:name => "Plank", :rest => 90, :sets => [
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                ]},
             ]},
             {:name => "Day 4", :section => "Week 4 - Deload", :exercises => [
                 {:name => "Reverse Lunge, Barbell", :rest => 90, :sets => [
-                    {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 100, :amrap => false, :rest => 90},
-                ]},
-                {:name => "Chin Up", :rest => 90, :sets => [
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                    {:reps => 8, :weight => 0, :amrap => false, :rest => 90},
-                ]},
-                {:name => "Plank", :rest => 90, :sets => [
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
+                    {:reps => 9, :weight => 100, :amrap => false, :rest => 90},
                 ]},
             ]},
             {:name => "Day 5 - Light Pump (Deload)", :section => "Week 4 - Deload", :exercises => [
@@ -398,11 +751,6 @@ module LiftPlan {
                     {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
                     {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
                     {:reps => 10, :weight => 0, :amrap => false, :rest => 90},
-                ]},
-                {:name => "Plank", :rest => 90, :sets => [
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
-                    {:reps => 1, :weight => 0, :amrap => false, :rest => 45},
                 ]},
             ]},
         ];

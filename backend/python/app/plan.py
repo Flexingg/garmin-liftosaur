@@ -273,8 +273,7 @@ def list_programs() -> list[dict]:
 
 def build_from_liftosaur(program_id: str = "current") -> dict:
     prog = json.loads(mcp_call("get_program", {"id": program_id}))
-    days = parse_program(prog["text"])
-    plan, warnings = build_plan(days, _rm1_map())
+    plan, warnings = build_by_week(prog["text"], _rm1_map())
     sections = sorted({d["section"] for d in plan if d.get("section")})
     return {
         "program": prog.get("name", ""),
@@ -379,3 +378,165 @@ def exercise_history(name: str, limit: int = 20) -> dict:
         "last": sessions[0] if sessions else None,
         "recent": sessions[:5],
     }
+
+# ------------------------------------------------- week-aware program resolution
+
+def _week_selector(name_field: str) -> tuple[str, set[int] | None]:
+    """Split "Squat[1-4]" -> ("Squat", {1,2,3,4}); "Squat" -> ("Squat", None).
+
+    Selectors seen in the real program: [1], [1-3], [1-4], [3], [4,1-3].
+    """
+    m = re.match(r"^([^\[\]]+?)\s*(?:\[([0-9,\- ]+)\])?$", name_field.strip())
+    if not m:
+        return name_field.strip(), None
+    name = m.group(1).strip()
+    spec = m.group(2)
+    if not spec:
+        return name, None
+    weeks: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, _, b = part.partition("-")
+            if a.strip().isdigit() and b.strip().isdigit():
+                weeks.update(range(int(a), int(b) + 1))
+        elif part.isdigit():
+            weeks.add(int(part))
+    return name, weeks or None
+
+
+def _parse_week_sections(text: str) -> list[tuple[str, list[dict]]]:
+    """-> [(week_label, [ {name, entries, blocks} ]) ] in program order."""
+    sections: list[tuple[str, list[dict]]] = []
+    cur_week: list[dict] | None = None
+    cur_day: dict | None = None
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line or line.startswith("//"):
+            continue
+        head = re.sub(r"\{.*", "", line).strip()
+        if not head:
+            continue
+        if head.startswith("## "):
+            cur_day = {"name": head[3:].strip(), "entries": [], "blocks": {}}
+            if cur_week is None:
+                cur_week = ["", []]
+                sections.append(("", cur_week[1]))
+            cur_week[1].append(cur_day)
+            continue
+        if head.startswith("#"):
+            cur_week = (head.lstrip("#").strip(), [])
+            sections.append(cur_week)
+            cur_day = None
+            continue
+        if head.startswith("!") or cur_day is None:
+            continue
+        parts = [pr.strip() for pr in head.split("/")]
+        name_field = parts[0]
+        # a named set block: "main / 1x5 65%, ... / 180s"
+        if len(parts) > 2 and re.match(r"^[A-Za-z][\w ]*$", name_field):
+            spec = next((pr for pr in parts[2:] if re.match(r"^\d+\s*x\s*\d+", pr)), "")
+            if spec:
+                rest = 0
+                for pr in parts[2:]:
+                    rm = REST_RE.search(pr)
+                    if rm and "x" not in pr:
+                        rest = int(rm.group(1))
+                cur_day["blocks"][name_field] = {"sets": parse_sets(spec, rest), "rest": rest}
+                continue
+        name, weeks = _week_selector(name_field)
+        sets_spec = ""
+        for pr in parts[1:]:
+            if pr.startswith("...") or re.match(r"^\d+\s*x\s*\d+", pr):
+                sets_spec = pr
+                break
+        if not name or not sets_spec:
+            continue
+        rest = 0
+        for pr in parts[1:]:
+            rm = REST_RE.search(pr)
+            if rm and not re.match(r"^\d+\s*x", pr):
+                rest = int(rm.group(1))
+        lb = ""
+        for pr in parts[1:]:
+            lm = re.search(r"\d+(?:\.\d+)?\s*lb", pr)
+            if lm:
+                lb = lm.group(0)
+                break
+        cur_day["entries"].append({"name": name, "sets_spec": sets_spec, "rest": rest,
+                                   "lb": lb, "weeks": weeks})
+    return sections
+
+
+def build_by_week(text: str, rm1: dict[str, float]) -> tuple[list[dict], list[str]]:
+    """Resolve the program WEEK BY WEEK - one day record per (week, day).
+
+    The rule this exists for: weeks 2 and 3 in the real program contain only a
+    new "main" block (1x3 70%, 1x3 80%, 1x3+ 90%) and leave every day section
+    empty. Empty days INHERIT the previous week's exercise list, while blocks
+    are redefined per week. Treating each week as standalone (as this did) threw
+    those days away entirely, which is why only weeks 1 and 4 appeared.
+    """
+    sections = _parse_week_sections(text)
+    warnings: list[str] = []
+    blocks: dict[str, dict] = {}
+    day_entries: dict[str, list[dict]] = {}
+    out: list[dict] = []
+
+    # every exercise's own inline sets, for "...Name[week]" references
+    inline: dict[str, dict] = {}
+    for _, days in sections:
+        for d in days:
+            for e in d["entries"]:
+                if not e["sets_spec"].startswith("...") and e["name"] not in inline:
+                    inline[e["name"]] = {"sets": parse_sets(e["sets_spec"], e["rest"]),
+                                         "rest": e["rest"]}
+
+    for week_num, (label, days) in enumerate(sections, start=1):
+        for d in days:                       # this week's block overrides
+            blocks.update(d["blocks"])
+        for d in days:                       # a declaring day replaces its list
+            if d["entries"]:
+                kept = [e for e in d["entries"]
+                        if e["weeks"] is None or week_num in e["weeks"]]
+                day_entries[d["name"]] = kept
+        for d in days:                       # emit in day order, inherited or not
+            exs = []
+            for e in day_entries.get(d["name"], []):
+                spec = e["sets_spec"]
+                if spec.startswith("..."):
+                    ref = spec[3:].strip()
+                    ref_name, ref_weeks = _week_selector(ref)
+                    if ref_weeks is not None and week_num not in ref_weeks:
+                        continue
+                    blk = (blocks.get(ref) or blocks.get(ref_name)
+                           or inline.get(ref_name))
+                    if not blk:
+                        warnings.append(f"week {week_num}: unresolved block '{spec}' "
+                                        f"for {e['name']}")
+                        continue
+                    sets = [dict(x) for x in blk["sets"]]
+                    rest = e["rest"] or blk["rest"]
+                else:
+                    sets = parse_sets(spec, e["rest"])
+                    rest = e["rest"]
+                if not rest:
+                    rest = 90
+                ex_rm1, how = lookup_rm1(rm1, e["name"])
+                for st in sets:
+                    w = st.pop("weight_expr", "")
+                    if w.endswith("%"):
+                        if ex_rm1:
+                            st["weight"] = round5(ex_rm1 * float(w[:-1]) / 100.0)
+                        else:
+                            st["weight"] = 0
+                            warnings.append(f"no rm1 for {e['name']} ({w})")
+                    elif w:
+                        st["weight"] = round5(parse_weight(w))
+                    else:
+                        st["weight"] = round5(parse_weight(e["lb"]))
+                    st["rest"] = st.get("rest") or rest
+                exs.append({"name": e["name"], "rest": rest, "rm1": ex_rm1, "sets": sets})
+            if exs:
+                out.append({"name": d["name"], "section": label, "exercises": exs})
+    return out, warnings

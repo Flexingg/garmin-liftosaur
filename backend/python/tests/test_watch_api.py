@@ -287,3 +287,53 @@ def test_workout_endpoint_accepts_the_watch_form_payload(monkeypatch):
 def test_workout_endpoint_rejects_an_empty_form_payload():
     r = client.post("/api/v1/watch/workout", data={"nope": "x"})
     assert r.status_code == 422
+
+
+# --- week-aware resolution (why only weeks 1 and 4 used to appear) -----------
+
+WEEK_PROGRAM = """# Week 1
+## Day 1
+main / used: none / 1x5 65%, 1x5 75%, 1x5+ 85% / 180s
+
+Squat, Barbell[1-4] / ...main
+Accessory[1-3] / 3x8 / 100lb 90s
+
+## Day 2
+Bench Press[1-4] / ...main
+
+# Week 2
+## Day 1
+main / used: none / 1x3 70%, 1x3 80%, 1x3+ 90% / 180s
+
+## Day 2
+"""
+
+
+def test_later_weeks_inherit_days_but_override_blocks():
+    """The real program's weeks 2-3 contain ONLY a new "main" block and empty day
+    sections. Empty days must inherit the previous week's exercises, and the
+    block must change the weights - that is the whole 5/3/1 wave. Treating each
+    week standalone silently dropped those days (only weeks 1 and 4 appeared)."""
+    plan, warnings = plan_mod.build_by_week(WEEK_PROGRAM, {"squat": 300.0,
+                                                          "benchpress": 200.0})
+    assert warnings == []
+    days = {(d["section"], d["name"]): d for d in plan}
+    # week 2 day 2 has no entries of its own -> inherited from week 1
+    assert ("Week 2", "Day 2") in days
+    # week 1: 65/75/85 of 300
+    w1 = [s["weight"] for s in days[("Week 1", "Day 1")]["exercises"][0]["sets"]]
+    assert w1 == [195, 225, 255]
+    # week 2: 70/80/90 of 300 - same exercise line, new block
+    w2 = [s["weight"] for s in days[("Week 2", "Day 1")]["exercises"][0]["sets"]]
+    assert w2 == [210, 240, 270]
+    # the [1-3] accessory is not in week 4's list
+    assert len(days[("Week 1", "Day 1")]["exercises"]) == 2
+
+
+def test_week_selector_limits_an_entry():
+    """[1-3] must not leak into week 4."""
+    text = WEEK_PROGRAM + "\n# Week 4\n## Day 1\nSquat, Barbell[1-4] / 1x5 40%\n"
+    plan_, _ = plan_mod.build_by_week(text, {"squat": 300.0})
+    w4 = [d for d in plan_ if d["section"] == "Week 4"][0]
+    names = [e["name"] for e in w4["exercises"]]
+    assert "Accessory" not in names
