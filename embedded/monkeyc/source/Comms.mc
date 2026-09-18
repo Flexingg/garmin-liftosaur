@@ -197,7 +197,9 @@ class LiftComms {
 
     // ----------------------------------------------------------------- workout
 
-    function postWorkout() as Void {
+    // Returns true when a request was actually dispatched (so the caller knows
+    // whether there is anything worth waiting for before the app exits).
+    function postWorkout() as Boolean {
         // The POST body path crashed twice: makeWebRequest serialises
         // `parameters` into the body and rejected both a nested dictionary and a
         // flat symbol-keyed one with "Unexpected Type Error". So there is NO
@@ -205,7 +207,7 @@ class LiftComms {
         var payload = _controller.outgoingPayload();
         if (payload == null or payload.equals("")) {
             System.println("Comms: nothing to post");
-            return;
+            return false;
         }
         var url = LIFT_BACKEND + "/api/v1/watch/workout?payload=" + urlEncode(payload);
         System.println("Comms: POST (query) " + url);
@@ -213,6 +215,7 @@ class LiftComms {
             :method => Communications.HTTP_REQUEST_METHOD_POST,
             :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
         }, method(:onPostResponse));
+        return true;
     }
 
     function onPostResponse(responseCode as Number,
@@ -224,6 +227,9 @@ class LiftComms {
             _controller.setSyncNote("synced to Liftosaur");
             System.println("Comms: workout recorded (" + responseCode + ")");
             WatchUi.requestUpdate();
+            // Only closes the app when an exit is actually pending (Task 1) - a
+            // background retry fired from app start must not do this.
+            _controller.finishExit();
             return;
         }
         _controller.setSyncNote("sync failed " + responseCode + " - will retry");
@@ -231,6 +237,7 @@ class LiftComms {
         // Keep it: retried on the next launch.
         System.println("Comms: workout post FAILED (" + responseCode + "), stashing");
         stashPending();
+        _controller.finishExit();
     }
 
     // ------------------------------------------------------- pending (retry)

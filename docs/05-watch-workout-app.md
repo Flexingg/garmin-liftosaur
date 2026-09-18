@@ -203,22 +203,126 @@ open so nothing can be lost by accident.
 
 ## What the Garmin Connect activity can and cannot contain
 
-The request was for sets/reps/weight on the activity. On the Venu 2S that is
-partly impossible:
+The request was for sets/reps/weight, heart rate, and accelerometer data on the
+activity itself (not just in Liftosaur). On the Venu 2S, three native APIs that
+would have made this easy simply **do not exist** (checked against
+`venu2s.api.debug.xml`):
 
-- `ActivityRecording.addSets()`, `createSet()` and `SetType` **do not exist** on
-  this device (checked against `venu2s.api.debug.xml`), so a structured
-  strength workout — native sets with reps and weight — cannot be written.
-- `Session.addLap()` **does** exist, so every completed set adds a lap. That
-  gives the activity real content and per-set timing.
-- The activity name carries the day (`Liftosaur - Day 1`) and the sport is a
-  strength training workout.
+| Missing API | Consequence |
+|---|---|
+| `ActivityRecording.Session.addSets()` / `createSet()` / `SetType` | no *native* Garmin strength sets with reps/weight — laps + developer fields are the only route |
+| `ActivityRecording.Session.addInformation()` | cannot inject arbitrary samples into the built-in metrics stream |
+| `Sensor.SensorLogging.enableSensorLogging()` | **cannot write a raw sensor stream (HR or accelerometer) into the FIT file** — this is why raw accelerometer data cannot live in the FIT at all, at any sample rate, on this device |
+
+What IS available instead, and what this app does with it (2026-09-18):
+
+- `Session.addLap()` — every completed set adds one FIT **lap**, and each lap
+  now carries **FIT developer fields**: `Exercise` (string), `SetIndex`,
+  `Weight`, `Reps`, `Amrap`, `Rest` — the real per-set data the activity was
+  missing. Written by `setLapFields()` in `Workout.mc`, immediately before
+  `addLap()` (the LAP message snapshots field values at that call).
+- `ActivityRecording.Session.createField()` (`Toybox.FitContributor`) —
+  developer fields, placed on `RECORD` (per-second), `LAP` (per-set), or
+  `SESSION` (summary) messages:
+
+  | Field | id | mesgType | Type | Meaning |
+  |---|---|---|---|---|
+  | `Exercise` | 0 | LAP | STRING | exercise name for the set just completed |
+  | `SetIndex` | 1 | LAP | UINT8 | 1-based set number within the exercise |
+  | `Weight` | 2 | LAP | UINT16 (lb) | weight for that set |
+  | `Reps` | 3 | LAP | UINT8 | reps performed |
+  | `Amrap` | 4 | LAP | UINT8 | 1 if the set was an AMRAP set |
+  | `Rest` | 5 | LAP | UINT16 (s) | prescribed rest after the set |
+  | `PeakG` | 6 | LAP | FLOAT (G) | peak accelerometer magnitude during the set |
+  | `MeanG` | 7 | LAP | FLOAT (G) | mean accelerometer magnitude during the set |
+  | `RepsEst` | 8 | LAP | UINT8 | accelerometer-derived rep count estimate |
+  | `Samples` | 9 | LAP | UINT16 | accelerometer samples collected for the set |
+  | `SetsDone` | 10 | SESSION | UINT8 | total logged sets |
+  | `Volume` | 11 | SESSION | UINT32 (lb) | sum of weight x reps over logged sets |
+  | `AccelRate` | 12 | SESSION | UINT8 (Hz) | accelerometer sample rate actually granted |
+  | `HeartRate` | 20 | RECORD | UINT8 (bpm) | one write per second from `Sensor.getInfo().heartRate` |
+  | `HeartRateAvg` | 21 | SESSION | UINT8 (bpm) | average of the per-second HR field |
+  | `HeartRateMax` | 22 | SESSION | UINT8 (bpm) | max of the per-second HR field |
+
+  Every `createField()`/`setData()` call is wrapped in `try`/`catch` — a
+  developer field is a bonus, and its failure must never cost the workout
+  itself (see "Risks" in the plan: if `createField` throws, it is logged with
+  `System.println` and the rest of the workout proceeds with that field simply
+  absent).
+- The activity name now carries the section too: `"Liftosaur - Day 1 (Week 1)"`.
 - The finish screen reports what happened (`saved to Garmin`, `nothing to save`,
   `activity not started`) because a silent failure here is indistinguishable
   from success.
 
-Per-set reps and weight ARE recorded — in Liftosaur, via the sync-back in
-docs/06. It is the app that owns the training data.
+Per-set reps and weight are ALSO recorded in Liftosaur itself, via the
+sync-back in docs/06 — that remains the source of truth for training history;
+the FIT developer fields make the same data visible in the Garmin Connect
+activity/FIT file directly.
+
+### Heart rate and the zones caveat
+
+The onboard HR sensor is now explicitly enabled at workout start
+(`Sensor.enableSensorType(Sensor.SENSOR_ONBOARD_HEARTRATE)` plus
+`Sensor.enableSensorEvents(...)`), because the measured baseline (four real
+activities pulled from the watch on 2026-09-18) showed native HR at 100% on
+some app-recorded sessions and completely absent (0%) on others. On top of
+that, a 1 Hz timer independently writes `Sensor.getInfo().heartRate` to the
+`HeartRate` developer field every second, so the activity always has *a* HR
+graph even on a session where the native stream fails to lock.
+
+**Honest limitation:** Garmin Connect computes *time in heart-rate zones* from
+the device's own **native** `heart_rate` record field (and the resulting
+`hr_zone`/`time_in_zone` FIT messages) — NOT from our developer field. The
+`HeartRate` developer field is a chart and a summary stat, never a zone
+source. `inspect_fit.py` reports "native HR present: yes/no" explicitly so a
+verification run never claims zones it did not actually produce.
+
+### Accelerometer: per-set metrics only, never raw, and a deliberate scope cut
+
+`Sensor.registerSensorDataListener()` is used to sample the accelerometer at
+up to 25 Hz (clamped to `Sensor.getMaxSampleRateForSensorType(:accelerometer)`
+if the device offers less). The callback (`onAccelData`) accumulates, per set:
+sample count, sum and peak of the acceleration magnitude, and a rep-count
+estimate from magnitude peaks crossing a hysteresis band (1.3 G up / 1.1 G
+down, in `Workout.mc`'s `ACCEL_HIGH_MILLI_G`/`ACCEL_LOW_MILLI_G`). These
+accumulators reset every time a lap is written (`setLapFields()`), because
+each lap is exactly one set. Weight-0 sets (`Chin Up`, `Plank`) are handled
+correctly because nothing here ever divides by weight.
+
+Because `Sensor.SensorLogging.enableSensorLogging()` does not exist on this
+device (see the table above), there is **no way to store the raw
+accelerometer stream in the FIT file** — the per-set summary fields above are
+the ceiling of what this device can record, not a shortcut. Streaming the raw
+track to our own backend (which already has a physics/rep-detection pipeline,
+`POST /api/v1/sets`) was offered and **the user deliberately declined it**
+(2026-09-18): "Garmin activity only — no network, everything stays on the
+watch." That path (`RecordingController.mc`, `SampleBuffer.mc`,
+`backend/python/app/main.py`) is untouched by this decision.
+
+Registering the accelerometer listener for the whole workout costs battery;
+this app keeps the field set small (four LAP fields + one SESSION field) and
+only requests it at all if the workout actually started recording.
+
+## Auto-exit after Save/Discard (2026-09-18)
+
+Before this date the app never closed itself — the user had to know about the
+hold-`SELECT` "Exit app" menu items. Now:
+
+- **Discard** exits immediately once `session.discard()` returns — nothing to
+  wait for.
+- **Save** stays on the DONE screen (showing `closing...` once the exit is
+  pending) until the Liftosaur upload resolves — success or failure, both
+  finish the exit — **or** an 8-second watchdog timer fires, whichever comes
+  first. This means a slow or unreachable backend can never hang the app: the
+  workout is safely stashed for retry (existing behaviour) and the app closes
+  on schedule regardless.
+- If there was nothing to upload (e.g. no sets were logged), Save exits
+  immediately like Discard — there is no network call to wait for.
+- While an exit is pending, `finishWorkout()` (top-button hold, the "End
+  workout" menu item, and the top-button single press once finished) becomes a
+  no-op, so the finish menu can't be reopened out from under the closing app.
+
+## Persistence
 
 ## Known gaps
 
@@ -232,3 +336,11 @@ docs/06. It is the app that owns the training data.
 - The deload section is parsed but not offered in the picker.
 - Weights come from `rm1`; if Liftosaur's `progress:` scripts have already moved
   the training max, the watch's numbers lag until the plan is regenerated.
+- **Hardware confirmation for the FIT developer fields, HR, accelerometer, and
+  auto-exit (2026-09-18) is still open.** All four build cleanly and pass
+  `check-device-api.py`, but "the symbol exists" and "the device actually
+  accepts the call at runtime" are different claims — `createField()` failing
+  at runtime, the accelerometer listener never delivering data, or the 8-second
+  exit watchdog behaving unexpectedly are all real possibilities the plan
+  itself calls out as risks. `PROGRESS-FIT.md` has the exact device protocol;
+  it has not yet been run.

@@ -20,6 +20,9 @@
            the GATT server. See docs/04-ble-transport.md. -->
       <iq:uses-permission id="BluetoothLowEnergy" />
       <iq:uses-permission id="Fit" />
+      <!-- Per-set exercise/weight/reps, HR, and accelerometer summaries as
+           FIT developer fields (docs/05). -->
+      <iq:uses-permission id="FitContributor" />
     </iq:permissions>
     <iq:languages>
       <iq:language>eng</iq:language>

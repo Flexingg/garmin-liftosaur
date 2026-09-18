@@ -312,8 +312,13 @@ class SetView extends WatchUi.View {
                 drawCentered(dc, c0 + 56, _c.syncNote(), Graphics.FONT_XTINY,
                              LIFT_TEXT_DIM);
             }
-            drawCentered(dc, c0 + 92, "hold = options", Graphics.FONT_XTINY,
-                         LIFT_TEXT_DIM);
+            if (_c.exitPending()) {
+                drawCentered(dc, c0 + 74, "closing...", Graphics.FONT_XTINY,
+                             LIFT_PURPLE_BRIGHT);
+            } else {
+                drawCentered(dc, c0 + 92, "hold = options", Graphics.FONT_XTINY,
+                             LIFT_TEXT_DIM);
+            }
             return;
         }
 

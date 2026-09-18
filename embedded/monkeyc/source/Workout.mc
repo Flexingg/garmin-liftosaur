@@ -17,11 +17,20 @@ import Toybox.Activity;
 import Toybox.ActivityRecording;
 import Toybox.Application;
 import Toybox.Attention;
+import Toybox.FitContributor;
 import Toybox.Lang;
+import Toybox.Math;
+import Toybox.Sensor;
 import Toybox.System;
 import Toybox.Time;
 import Toybox.Timer;
 import Toybox.WatchUi;
+
+// Accelerometer magnitude hysteresis band, in milli-G (1000 = 1 G). A rep's
+// concentric phase pushes the magnitude well above 1 G; the low threshold
+// must clear normal standing/holding noise so it does not double-count.
+const ACCEL_HIGH_MILLI_G = 1300;
+const ACCEL_LOW_MILLI_G = 1100;
 
 const STORE_KEY = "lift_workout_v1";
 
@@ -61,6 +70,42 @@ class WorkoutController {
     private var _sessionStopped;
     private var _info;                  // last fetched exercise history
     private var _historyIndex;          // which "recent" session the history list has open
+
+    // ---- exit after finish (Task 1) ----
+    private var _exitPending;      // finish resolved; waiting for the upload (or the watchdog)
+    private var _exitTimer;        // one-shot watchdog
+
+    // ---- FIT developer fields (Task 2/3/4) ----
+    private var _fExercise;   // LAP, STRING  - exercise name
+    private var _fSetIndex;   // LAP, UINT8   - 1-based within the exercise
+    private var _fWeightLb;   // LAP, UINT16  - lb
+    private var _fReps;       // LAP, UINT8   - reps performed
+    private var _fAmrap;      // LAP, UINT8   - 1 = AMRAP set
+    private var _fRestS;      // LAP, UINT16  - prescribed rest
+    private var _fPeakG;      // LAP, FLOAT   - peak accel magnitude, G
+    private var _fMeanG;      // LAP, FLOAT   - mean accel magnitude, G
+    private var _fRepsEst;    // LAP, UINT8   - accel-derived rep estimate
+    private var _fSamples;    // LAP, UINT16  - accel sample count for the set
+    private var _fSetsDone;   // SESSION, UINT8
+    private var _fVolumeLb;   // SESSION, UINT32
+    private var _fAccelRate;  // SESSION, UINT8 - Hz actually requested
+    private var _fHr;         // RECORD, UINT8   - bpm, one write per second
+    private var _fHrAvg;      // SESSION, UINT8
+    private var _fHrMax;      // SESSION, UINT8
+
+    // ---- heart rate (Task 3) ----
+    private var _hrTimer;
+    private var _hrSum;
+    private var _hrCount;
+    private var _hrMax;
+
+    // ---- accelerometer (Task 4) ----
+    private var _accelRate;        // Hz actually requested from the sensor
+    private var _accelSamples;
+    private var _accelSumMag;      // sum of magnitude, milli-G
+    private var _accelPeakMag;     // peak magnitude, milli-G
+    private var _accelRepsEst;
+    private var _accelAboveThreshold;
 
     function initialize() {
         _days = LiftPlan.days();
@@ -103,7 +148,39 @@ class WorkoutController {
         _info = null;
         _historyIndex = 0;
         _sessionStopped = false;
+        _exitPending = false;
+        _exitTimer = null;
+        _fExercise = null;
+        _fSetIndex = null;
+        _fWeightLb = null;
+        _fReps = null;
+        _fAmrap = null;
+        _fRestS = null;
+        _fPeakG = null;
+        _fMeanG = null;
+        _fRepsEst = null;
+        _fSamples = null;
+        _fSetsDone = null;
+        _fVolumeLb = null;
+        _fAccelRate = null;
+        _fHr = null;
+        _fHrAvg = null;
+        _fHrMax = null;
+        _hrTimer = null;
+        _hrSum = 0;
+        _hrCount = 0;
+        _hrMax = 0;
+        _accelRate = 0;
+        _resetAccelAccumulators();
         _resetEditable();
+    }
+
+    private function _resetAccelAccumulators() as Void {
+        _accelSamples = 0;
+        _accelSumMag = 0.0;
+        _accelPeakMag = 0.0;
+        _accelRepsEst = 0;
+        _accelAboveThreshold = false;
     }
 
     // ------------------------------------------------------------- plan access
@@ -289,7 +366,7 @@ class WorkoutController {
         clearPending();
         if (Toybox has :ActivityRecording) {
             _session = ActivityRecording.createSession({
-                :name     => "Liftosaur - " + dayName(_dayIndex),
+                :name     => "Liftosaur - " + dayName(_dayIndex) + " (" + _section + ")",
                 :sport    => Activity.SPORT_TRAINING,
                 :subSport => Activity.SUB_SPORT_STRENGTH_TRAINING
             });
@@ -299,11 +376,213 @@ class WorkoutController {
                 _session.start();
                 _sessionStopped = false;
                 _activityNote = "";
+                createFitFields();
+                startHrCapture();
+                startAccel();
             }
         } else {
             _activityNote = "recording unsupported";
         }
         save();
+    }
+
+    // ------------------------------------------------------ FIT developer fields
+
+    // Field ids are ours to choose and must stay stable across builds (they
+    // identify the field to Garmin Connect). Developer fields are a bonus:
+    // every call here is guarded so a failure never costs the workout itself.
+    private function createFitFields() as Void {
+        if (_session == null or !(Toybox has :FitContributor)) { return; }
+        try {
+            _fExercise = _session.createField("Exercise", 0, FitContributor.DATA_TYPE_STRING,
+                {:mesgType => FitContributor.MESG_TYPE_LAP, :count => 32});
+            _fSetIndex = _session.createField("SetIndex", 1, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_LAP});
+            _fWeightLb = _session.createField("Weight", 2, FitContributor.DATA_TYPE_UINT16,
+                {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "lb"});
+            _fReps = _session.createField("Reps", 3, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_LAP});
+            _fAmrap = _session.createField("Amrap", 4, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_LAP});
+            _fRestS = _session.createField("Rest", 5, FitContributor.DATA_TYPE_UINT16,
+                {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "s"});
+            _fPeakG = _session.createField("PeakG", 6, FitContributor.DATA_TYPE_FLOAT,
+                {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "G"});
+            _fMeanG = _session.createField("MeanG", 7, FitContributor.DATA_TYPE_FLOAT,
+                {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "G"});
+            _fRepsEst = _session.createField("RepsEst", 8, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_LAP});
+            _fSamples = _session.createField("Samples", 9, FitContributor.DATA_TYPE_UINT16,
+                {:mesgType => FitContributor.MESG_TYPE_LAP});
+            _fSetsDone = _session.createField("SetsDone", 10, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION});
+            _fVolumeLb = _session.createField("Volume", 11, FitContributor.DATA_TYPE_UINT32,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "lb"});
+            _fAccelRate = _session.createField("AccelRate", 12, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "Hz"});
+            _fHr = _session.createField("HeartRate", 20, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "bpm"});
+            _fHrAvg = _session.createField("HeartRateAvg", 21, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "bpm"});
+            _fHrMax = _session.createField("HeartRateMax", 22, FitContributor.DATA_TYPE_UINT8,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "bpm"});
+        } catch (e) {
+            // Developer fields are a bonus. Never let them cost a workout.
+            System.println("Workout: createField failed: " + e.getErrorMessage());
+        }
+    }
+
+    // One FIT lap per completed set, carrying what the set actually was, plus
+    // that set's accelerometer summary. Values must be written IMMEDIATELY
+    // before addLap(): the lap message snapshots them at that call.
+    private function setLapFields() as Void {
+        if (_session == null) { return; }
+        try {
+            if (_fExercise != null) { _fExercise.setData(currentExerciseName()); }
+            if (_fSetIndex != null) { _fSetIndex.setData(_setIndex + 1); }
+            if (_fWeightLb != null) { _fWeightLb.setData(_weights[_exIndex][_setIndex] as Number); }
+            if (_fReps != null) { _fReps.setData(_reps[_exIndex][_setIndex] as Number); }
+            if (_fAmrap != null) { _fAmrap.setData(currentAmrap() ? 1 : 0); }
+            if (_fRestS != null) { _fRestS.setData(currentRest()); }
+            if (_fPeakG != null) { _fPeakG.setData(_accelPeakMag / 1000.0); }
+            if (_fMeanG != null) {
+                var mean = (_accelSamples > 0) ? (_accelSumMag / _accelSamples) / 1000.0 : 0.0;
+                _fMeanG.setData(mean);
+            }
+            if (_fRepsEst != null) { _fRepsEst.setData(_accelRepsEst); }
+            if (_fSamples != null) { _fSamples.setData(_accelSamples); }
+        } catch (e) {
+            System.println("Workout: lap field write failed: " + e.getErrorMessage());
+        }
+        // Each lap is one set: the accelerometer accumulators reset for the next.
+        _resetAccelAccumulators();
+    }
+
+    private function _computeVolumeLb() as Number {
+        var vol = 0;
+        for (var i = 0; i < _weights.size(); i++) {
+            var wrow = _weights[i] as Array;
+            for (var j = 0; j < wrow.size(); j++) {
+                if (isLogged(i, j)) {
+                    vol += (wrow[j] as Number) * (_reps[i][j] as Number);
+                }
+            }
+        }
+        return vol;
+    }
+
+    // Written just before _session.save() so the summary always reflects the
+    // whole workout, not just the most recent set.
+    private function writeSessionSummaryFields() as Void {
+        if (_session == null) { return; }
+        try {
+            if (_fSetsDone != null) { _fSetsDone.setData(_setsDone); }
+            if (_fVolumeLb != null) { _fVolumeLb.setData(_computeVolumeLb()); }
+            if (_fAccelRate != null and _accelRate > 0) { _fAccelRate.setData(_accelRate); }
+            if (_fHrAvg != null and _hrCount > 0) { _fHrAvg.setData(_hrSum / _hrCount); }
+            if (_fHrMax != null) { _fHrMax.setData(_hrMax); }
+        } catch (e) {
+            System.println("Workout: session field write failed: " + e.getErrorMessage());
+        }
+    }
+
+    // ------------------------------------------------------------- heart rate
+
+    // Sensor.enableSensorEvents needs a listener method even though the actual
+    // per-second HR write below reads Sensor.getInfo() directly on our own
+    // timer - this just tells the OS the app wants sensor data flowing.
+    function onSensorEvent(info as Sensor.Info) as Void {
+    }
+
+    private function startHrCapture() as Void {
+        if (!(Toybox has :Sensor)) { return; }
+        try {
+            Sensor.enableSensorType(Sensor.SENSOR_ONBOARD_HEARTRATE);
+        } catch (e) {
+            System.println("Workout: enableSensorType failed: " + e.getErrorMessage());
+        }
+        try {
+            Sensor.enableSensorEvents(method(:onSensorEvent));
+        } catch (e) {
+            System.println("Workout: enableSensorEvents failed: " + e.getErrorMessage());
+        }
+        try {
+            _hrTimer = new Timer.Timer();
+            _hrTimer.start(method(:hrTick), 1000, true);
+        } catch (e) {
+            System.println("Workout: HR timer start failed: " + e.getErrorMessage());
+        }
+    }
+
+    // Guarantees a per-second HR field even on the sessions where the native
+    // heart_rate stream is missing (the baseline showed 0% native HR on some
+    // app-recorded activities).
+    function hrTick() as Void {
+        if (!(Toybox has :Sensor)) { return; }
+        try {
+            var info = Sensor.getInfo();
+            if (info != null and info.heartRate != null) {
+                var hr = info.heartRate as Number;
+                if (hr > 0 and hr < 250) {
+                    if (_fHr != null) { _fHr.setData(hr); }
+                    _hrSum += hr;
+                    _hrCount++;
+                    if (hr > _hrMax) { _hrMax = hr; }
+                }
+            }
+        } catch (e) {
+            // A bad/missing reading must never break the workout.
+        }
+    }
+
+    // ---------------------------------------------------------- accelerometer
+
+    // The public Sensor API caps this well below 100 Hz; ask the system for
+    // its maximum and clamp to 25 Hz so the rate matches the contract in docs/05.
+    private function startAccel() as Void {
+        if (!(Toybox has :Sensor)) { return; }
+        try {
+            var maxRate = Sensor.getMaxSampleRateForSensorType(:accelerometer);
+            var rate = 25;
+            if (maxRate != null and (maxRate as Number) < rate) { rate = maxRate as Number; }
+            _accelRate = rate;
+            Sensor.registerSensorDataListener(method(:onAccelData),
+                {:period => 1, :accelerometer => {:enabled => true, :sampleRate => rate}});
+        } catch (e) {
+            System.println("Workout: accel registration failed: " + e.getErrorMessage());
+        }
+    }
+
+    // Accumulates per set: sample count, sum/peak of the acceleration
+    // magnitude, and a simple rep estimate from magnitude peaks above a
+    // hysteresis band. Reset happens in setLapFields() (each lap is one set).
+    function onAccelData(sensorData as Sensor.SensorData) as Void {
+        try {
+            var accel = sensorData.accelerometerData;
+            if (accel == null) { return; }
+            var xs = accel.x;
+            var ys = accel.y;
+            var zs = accel.z;
+            if (xs == null or ys == null or zs == null) { return; }
+            var n = xs.size();
+            for (var i = 0; i < n; i++) {
+                var x = xs[i] as Number;
+                var y = ys[i] as Number;
+                var z = zs[i] as Number;
+                var mag = Math.sqrt((x * x + y * y + z * z).toFloat());
+                _accelSamples++;
+                _accelSumMag += mag;
+                if (mag > _accelPeakMag) { _accelPeakMag = mag; }
+                if (_accelAboveThreshold) {
+                    if (mag < ACCEL_LOW_MILLI_G) { _accelAboveThreshold = false; }
+                } else if (mag > ACCEL_HIGH_MILLI_G) {
+                    _accelAboveThreshold = true;
+                    _accelRepsEst++;
+                }
+            }
+        } catch (e) {
+            // A bad sample batch must never break the workout.
+        }
     }
 
     // Adjust the current set's weight by delta (5 lb steps in the UI).
@@ -354,6 +633,7 @@ class WorkoutController {
     // timing in Garmin Connect.
     private function markLap() as Void {
         if (_session == null) { return; }
+        setLapFields();
         _session.addLap();
         _lapsAdded++;
     }
@@ -1198,6 +1478,7 @@ class WorkoutController {
     // Stop recording and let the user keep or discard the activity. Mirrors the
     // behaviour of the old recording path: no silent Garmin Connect litter.
     function finishWorkout() as Void {
+        if (_exitPending) { return; }
         stopRest();
         _awaitingReps = false;
         if (_session != null and !_sessionStopped) {
@@ -1224,13 +1505,17 @@ class WorkoutController {
             // re-POST the same workout and create a duplicate Liftosaur record.
             return;
         }
+        // Whether the upload was actually dispatched: requestExit() below only
+        // waits on the network when there is something in flight to wait for.
+        var dispatched = false;
         if (save) {
             // Hand the finished workout to the backend, which writes it into
             // Liftosaur. Failures are stashed and retried on the next launch.
-            if (_comms != null) { _comms.postWorkout(); }
+            if (_comms != null) { dispatched = _comms.postWorkout(); }
         }
         if (_session != null) {
             if (save) {
+                writeSessionSummaryFields();
                 _session.save();
                 _activityNote = "saved to Garmin";
                 System.println("Workout: SAVED " + _setsDone + "/" + _setsTotal + " sets");
@@ -1242,6 +1527,7 @@ class WorkoutController {
         } else if (save) {
             _activityNote = "nothing to save";
         }
+        stopSensorCapture();
         // NOTE: deliberately NOT resetting _exIndex/_setIndex here (deviation
         // from the plan's literal snippet - see PROGRESS.md Task 6 for why:
         // isFinished() is cursor-based, and zeroing the cursor would make the
@@ -1260,7 +1546,49 @@ class WorkoutController {
         _sessionStopped = false;
         clearSaved();
         clearPending();
+        // Save waits (up to the watchdog) for the upload it just dispatched;
+        // Discard - or a save with nothing to upload - has nothing to wait for.
+        requestExit(save and dispatched);
     }
+
+    private function stopSensorCapture() as Void {
+        if (_hrTimer != null) {
+            _hrTimer.stop();
+            _hrTimer = null;
+        }
+        if (Toybox has :Sensor) {
+            try { Sensor.unregisterSensorDataListener(); } catch (e) { }
+        }
+    }
+
+    // ---- exit after finish (Task 1) ----
+
+    // Called by the upload callback (success or failure) and by the watchdog.
+    // Guarded on _exitPending so a background retry at app start (which also
+    // goes through LiftComms.onPostResponse) can never close the app.
+    function finishExit() as Void {
+        if (!_exitPending) { return; }
+        _exitPending = false;
+        if (_exitTimer != null) { _exitTimer.stop(); _exitTimer = null; }
+        stopRest();
+        stopSensorCapture();
+        System.println("Workout: exiting after finish");
+        System.exit();
+    }
+
+    function requestExit(waitForUpload as Boolean) as Void {
+        if (_exitPending) { return; }
+        _exitPending = true;
+        WatchUi.requestUpdate();
+        if (!waitForUpload) {
+            finishExit();
+            return;
+        }
+        _exitTimer = new Timer.Timer();
+        _exitTimer.start(method(:finishExit), 8000, false);
+    }
+
+    function exitPending() as Boolean { return _exitPending; }
 
     // Reported on the finish screen: the user could not tell whether the
     // activity reached Garmin Connect, so say so plainly.
