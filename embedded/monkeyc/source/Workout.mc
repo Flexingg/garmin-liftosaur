@@ -359,6 +359,14 @@ class WorkoutController {
     // Begin the session: start recording so Garmin Connect still gets an activity.
     function startWorkout() as Void {
         if (_started) { return; }
+        // Starting a workout must never inherit a previous session's logged sets.
+        // The grid used to survive a finish -> start cycle when the user pressed
+        // START on the day picker without re-selecting the day (selectDay() is the
+        // only other thing that resets it), so stale sets were re-uploaded as part
+        // of the new workout - the 2026-09-18 test sent 8 Squat sets while only 6
+        // laps were recorded. A restored mid-workout session returns above (it is
+        // already _started), so this only clears a genuinely fresh start.
+        _resetEditable();
         _started = true;
         _startedAt = Time.now().value();
         _finalElapsedMs = -1;

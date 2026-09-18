@@ -339,6 +339,29 @@ Registering the accelerometer listener for the whole workout costs battery;
 this app keeps the field set small (four LAP fields + one SESSION field) and
 only requests it at all if the workout actually started recording.
 
+## Publishing a private beta (to make the fields visible in Garmin Connect)
+
+Garmin Connect renders FIT developer fields only for an app installed **from the
+store**, so the sideloaded `.prg` will never show the per-set values no matter
+what the code does (see the section above). A **beta app** is the supported way
+to test this without publishing: it is visible only to the uploading account.
+
+- Upload page: **https://apps.garmin.com/en-US/developer/upload** (the developer
+  console is on `apps.garmin.com`, *not* the `developer.garmin.com` docs site —
+  the dashboard is https://apps.garmin.com/en-US/developer/dashboard). Garmin's
+  Beta Apps doc: "you will need to create an alternate app id in your manifest
+  using a UUID creator ... Once downloaded you can edit app settings in Garmin
+  Connect and Garmin Express and test your developer fields in Garmin Connect."
+- The packaging is automated: `./tools/build_beta_iq.sh <beta-uuid>` swaps the
+  app id, builds `bin/Liftosaur-beta.iq`, and restores the manifest (a stray beta
+  id in the tree would silently change the identity of the sideloaded app).
+- **App ids** (keep both — a future beta update must reuse its id):
+  - production: `9441493B-9C50-48A9-8E21-0416DB9F9F10` (what the sideloaded `.prg` uses)
+  - beta: `4012BE4F-A8B2-421C-87CD-66095EBCBE6F`
+- Beta apps do **not** appear in the Connect IQ *mobile* app; install from the
+  **web** store page (signed in → Download → Garmin Express / Connect IQ sync
+  queues it). If a duplicate app shows on the watch, remove the sideloaded copy.
+
 ## Auto-exit after Save/Discard (2026-09-18)
 
 Before this date the app never closed itself — the user had to know about the
