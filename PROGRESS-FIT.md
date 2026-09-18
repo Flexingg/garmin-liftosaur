@@ -434,3 +434,44 @@ happen, and this file does not claim otherwise. `dist/Liftosaur.prg` (229772 byt
 sha256 `ae5418448a956f4d926c38557e9228b350f93a71b85ac717049fb0aa8438a19e`) and
 `dist/Liftosaur.prg.sha256` are refreshed from this session's build and ready to hand to the user
 for Task 6's device protocol.
+
+---
+
+## Batch 2 — Garmin Connect display: metadata, and the store-only rule (2026-09-18)
+
+**Trigger:** the user recorded a real workout with the Batch 1 build. Hermes pulled the FIT off the
+watch over MTP and decoded it: 11 laps, each with `Exercise` (32-byte string), `SetIndex`, `Weight`,
+`Reps`, `Amrap`, `Rest`, `PeakG`/`MeanG` (FLOAT), `RepsEst`, `Samples` (25/s at 25 Hz), session
+`SetsDone`/`Volume`/`AccelRate`. **The recording worked. Garmin Connect still showed only name + time.**
+
+| Item | Status | Evidence |
+|---|---|---|
+| A. Declare the fields in `resources/fitfields.xml` | DONE | all 16 fitField ids match `createFitFields()`; build + `check-device-api` clean |
+| B. Inspector decodes values + flags missing metadata | DONE | `lap 1 Exercise=Upright Row, Barbell SetIndex=2 Weight=45lb Reps=10 PeakG=1.07G Samples=50`; `--strict-dev-fields` exits 1 on the real file, 0 on the clean baselines |
+| C. Document the two causes | DONE (by Hermes) | `docs/05` — see below |
+| D. Gates | DONE | pytest 54 passed; build clean; `verify_watch_payload.py` round-trip clean |
+| E. Store package for a beta upload | DONE | `dist/Liftosaur.iq` (411,709 bytes, 8 devices, signed with the existing 4096-bit key) |
+
+**Two documented causes of the Garmin Connect gap** (both verified, neither is guesswork):
+1. Missing `fitContributions` metadata. Garmin's Activity Recording docs: "Field id *must* match the
+   fitField id in resources or your data will not display" — now declared.
+2. **A sideloaded app's developer fields are never rendered by Garmin Connect**; it resolves the
+   metadata server-side from the store. Garmin forum thread 299371: the same app sideloaded showed
+   nothing and appeared once uploaded as a **beta** app. Hence the `.iq` export: a private beta upload
+   is the only route, and that upload is the user's to make (his account).
+
+**Fixed in this batch (Hermes, after Claude was cut off by its session limit):**
+- `recountLogged()` in `Workout.mc` — `SetsDone` was restored from storage and incremented from there,
+  so the session summary read 16 sets for an 11-set workout. It is now derived from the `_logged` grid.
+- `docs/05` sections for both causes + the corrected hardware-confirmation status.
+
+**Measured in that device session, and still open:**
+- **No heart rate from any source**: native `heart_rate` 0/12 records, and the app's own per-second
+  field never got a reading (`HeartRateAvg` invalid, `Max` 0). Consistent with an 11-second test on a
+  watch that was not being worn snugly — an earlier real session the same day had native HR at 100%.
+  Needs a worn retest; Garmin's time-in-zones depends on the native stream, not on our field.
+- **Auto-exit not yet observed.** The Save path clearly ran (the FIT and the Liftosaur record both
+  exist) but nobody watched the screen. Needs the next test to confirm `closing...` then a clean exit.
+- The saved file carries `field_description` for only 6 of 16 developer fields (the 10 LAP fields have
+  values with no description). `inspect_fit.py --strict-dev-fields` now reports this; worth watching on
+  the next recording to see whether it is a per-run writer quirk.
