@@ -1,0 +1,83 @@
+<resources xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+
+  <!--
+    Developer-field metadata for the FIT fields Workout.mc creates via
+    ActivityRecording.Session.createField(). Per Garmin's docs (developer-fields
+    topic under connect-iq/core-topics/activity-recording): "you need to add your
+    field definitions in your resources using the fitContributions block ...
+    Field id must match the fitField id in resources or your data will not
+    display." Every id below is exactly the fieldId passed to createField() in
+    Workout.mc's createFitFields().
+
+    Exercise (id 0) is a STRING field. Garmin Connect's lap/summary columns and
+    its chart are numeric-only ("Graph fields can only support numeric data"),
+    so the exercise name is not renderable as a column or chart there — it is
+    still written correctly into the FIT file itself (LAP messages allow
+    strings), which is where tools like inspect_fit.py read it from.
+  -->
+  <fitContributions>
+    <fitField id="0" dataLabel="@Strings.fitLabelExercise" unitLabel="@Strings.fitUnitNone"
+              sortOrder="0" displayInActivityLaps="true" />
+    <fitField id="1" dataLabel="@Strings.fitLabelSetIndex" unitLabel="@Strings.fitUnitNone"
+              sortOrder="1" displayInActivityLaps="true" precision="0" />
+    <fitField id="2" dataLabel="@Strings.fitLabelWeight" unitLabel="@Strings.fitUnitLb"
+              sortOrder="2" displayInActivityLaps="true" precision="0" />
+    <fitField id="3" dataLabel="@Strings.fitLabelReps" unitLabel="@Strings.fitUnitNone"
+              sortOrder="3" displayInActivityLaps="true" precision="0" />
+    <fitField id="4" dataLabel="@Strings.fitLabelAmrap" unitLabel="@Strings.fitUnitNone"
+              sortOrder="4" displayInActivityLaps="true" precision="0" />
+    <fitField id="5" dataLabel="@Strings.fitLabelRest" unitLabel="@Strings.fitUnitS"
+              sortOrder="5" displayInActivityLaps="true" precision="0" />
+    <fitField id="6" dataLabel="@Strings.fitLabelPeakG" unitLabel="@Strings.fitUnitG"
+              sortOrder="6" displayInActivityLaps="true" precision="2" />
+    <fitField id="7" dataLabel="@Strings.fitLabelMeanG" unitLabel="@Strings.fitUnitG"
+              sortOrder="7" displayInActivityLaps="true" precision="2" />
+    <fitField id="8" dataLabel="@Strings.fitLabelRepsEst" unitLabel="@Strings.fitUnitNone"
+              sortOrder="8" displayInActivityLaps="true" precision="0" />
+    <fitField id="9" dataLabel="@Strings.fitLabelSamples" unitLabel="@Strings.fitUnitNone"
+              sortOrder="9" displayInActivityLaps="true" precision="0" />
+
+    <fitField id="10" dataLabel="@Strings.fitLabelSetsDone" unitLabel="@Strings.fitUnitNone"
+              sortOrder="10" displayInActivitySummary="true" precision="0" />
+    <fitField id="11" dataLabel="@Strings.fitLabelVolume" unitLabel="@Strings.fitUnitLb"
+              sortOrder="11" displayInActivitySummary="true" precision="2" />
+    <fitField id="12" dataLabel="@Strings.fitLabelAccelRate" unitLabel="@Strings.fitUnitHz"
+              sortOrder="12" displayInActivitySummary="true" precision="0" />
+
+    <fitField id="20" dataLabel="@Strings.fitLabelHeartRate" unitLabel="@Strings.fitUnitBpm"
+              chartTitle="@Strings.fitChartHeartRate" sortOrder="13" displayInChart="true"
+              fillColor="#FF3B30" precision="0" />
+    <fitField id="21" dataLabel="@Strings.fitLabelHeartRateAvg" unitLabel="@Strings.fitUnitBpm"
+              sortOrder="14" displayInActivitySummary="true" precision="0" />
+    <fitField id="22" dataLabel="@Strings.fitLabelHeartRateMax" unitLabel="@Strings.fitUnitBpm"
+              sortOrder="15" displayInActivitySummary="true" precision="0" />
+  </fitContributions>
+
+  <strings>
+    <string id="fitUnitNone"></string>
+    <string id="fitUnitLb">lb</string>
+    <string id="fitUnitS">s</string>
+    <string id="fitUnitG">G</string>
+    <string id="fitUnitHz">Hz</string>
+    <string id="fitUnitBpm">bpm</string>
+
+    <string id="fitLabelExercise">Exercise</string>
+    <string id="fitLabelSetIndex">Set</string>
+    <string id="fitLabelWeight">Weight</string>
+    <string id="fitLabelReps">Reps</string>
+    <string id="fitLabelAmrap">AMRAP</string>
+    <string id="fitLabelRest">Rest</string>
+    <string id="fitLabelPeakG">Peak G</string>
+    <string id="fitLabelMeanG">Mean G</string>
+    <string id="fitLabelRepsEst">Reps (accel)</string>
+    <string id="fitLabelSamples">Samples</string>
+    <string id="fitLabelSetsDone">Sets Done</string>
+    <string id="fitLabelVolume">Volume</string>
+    <string id="fitLabelAccelRate">Accel Rate</string>
+    <string id="fitLabelHeartRate">Heart Rate</string>
+    <string id="fitLabelHeartRateAvg">Avg HR</string>
+    <string id="fitLabelHeartRateMax">Max HR</string>
+    <string id="fitChartHeartRate">Heart Rate</string>
+  </strings>
+</resources>

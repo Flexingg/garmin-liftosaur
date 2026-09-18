@@ -259,6 +259,42 @@ sync-back in docs/06 — that remains the source of truth for training history;
 the FIT developer fields make the same data visible in the Garmin Connect
 activity/FIT file directly.
 
+### Why Garmin Connect showed nothing for a real recorded workout (2026-09-18)
+
+The first real device test proved the **recording** side works: the FIT file pulled
+off the watch over MTP contains 11 laps, each carrying `Exercise` (a 32-byte
+string — e.g. `Upright Row, Barbell`), `SetIndex`, `Weight` (45 lb), `Reps` (10),
+`Rest`, `PeakG` (1.06-1.33 G), `MeanG`, `RepsEst` and `Samples` (25 per second at
+25 Hz), plus session `SetsDone`/`Volume`/`AccelRate`. Garmin Connect still showed
+only the activity name and time. Two separate, documented causes:
+
+1. **The field metadata was missing.** Garmin's Activity Recording docs require a
+   `fitContributions` resource block: "you need to add your field definitions in
+   your resources using the `fitContributions` block ... Field id *must* match the
+   fitField id in resources or your data will not display." `resources/fitfields.xml`
+   now declares all 16 fields with the same ids passed to `createField()`, with
+   `displayInActivityLaps` (LAP fields), `displayInActivitySummary` (SESSION
+   fields) and `displayInChart` (the single numeric RECORD field, `HeartRate`).
+   Garmin Connect's lap/summary columns and charts are numeric-only, so the
+   `Exercise` **string** is written to the FIT file but is not renderable as a
+   column/chart there.
+2. **Garmin Connect does not render developer fields for a *sideloaded* app.**
+   It resolves the metadata server-side from the Connect IQ store, so a `.prg`
+   copied over MTP shows nothing no matter what the code does. A developer on
+   Garmin's forum verified this directly: the same app sideloaded showed no data,
+   and "I uploaded the same sideloaded app as a beta app, and now FIT contributor
+   data appears, so the lack of FIT data could only be because the app was
+   sideloaded." **A private beta upload is therefore the only route to seeing the
+   per-set values in Garmin Connect** — the build is exported as
+   `dist/Liftosaur.iq` for exactly that.
+
+Also measured in that session: **no heart rate was recorded from any source** —
+the native stream was 0% and the app's own per-second `HeartRate` field never got
+a reading (`HeartRateAvg` = invalid, `Max` = 0). An 11-second test on a watch that
+is not being worn snugly is the likely reason (an earlier real session the same day
+had native HR at 100%). Time-in-zones is computed by Garmin from its **native** HR
+records, so it depends on that stream, not on our field.
+
 ### Heart rate and the zones caveat
 
 The onboard HR sensor is now explicitly enabled at workout start
@@ -336,11 +372,15 @@ hold-`SELECT` "Exit app" menu items. Now:
 - The deload section is parsed but not offered in the picker.
 - Weights come from `rm1`; if Liftosaur's `progress:` scripts have already moved
   the training max, the watch's numbers lag until the plan is regenerated.
-- **Hardware confirmation for the FIT developer fields, HR, accelerometer, and
-  auto-exit (2026-09-18) is still open.** All four build cleanly and pass
-  `check-device-api.py`, but "the symbol exists" and "the device actually
-  accepts the call at runtime" are different claims — `createField()` failing
-  at runtime, the accelerometer listener never delivering data, or the 8-second
-  exit watchdog behaving unexpectedly are all real possibilities the plan
-  itself calls out as risks. `PROGRESS-FIT.md` has the exact device protocol;
-  it has not yet been run.
+- **Hardware confirmation (updated 2026-09-18 after a real device test).** The
+  FIT developer fields, the accelerometer fields and the save/upload path are
+  CONFIRMED working on hardware — the FIT pulled off the watch carries 11 laps
+  with exercise/weight/reps and 25 Hz accelerometer summaries, and the workout
+  reached Liftosaur. Still open: heart rate (that session recorded none from any
+  source — needs a test on a properly worn watch), the auto-exit timing (not yet
+  observed directly), and Garmin Connect display, which needs the beta-store
+  upload described above.
+- **`SetsDone` in the session summary was wrong for a restored session** (it read
+  16 for an 11-set workout, because the counter was restored from storage and
+  incremented from there). `WorkoutController.recountLogged()` now derives it from
+  the `_logged` grid, so the counter cannot drift from what was actually logged.

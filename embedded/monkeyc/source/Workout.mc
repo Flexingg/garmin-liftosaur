@@ -651,7 +651,7 @@ class WorkoutController {
         _awaitingReps = false;
         if (!isLogged(_exIndex, _setIndex)) {
             _logged[_exIndex][_setIndex] = true;
-            _setsDone++;
+            recountLogged();
             markLap();
         }
         var rest = currentRest();
@@ -1225,7 +1225,25 @@ class WorkoutController {
         if (r != null) { splitNumbers(r as String, _reps); }
         var l = Application.Storage.getValue("lift_logged");
         if (l != null) { splitBooleans(l as String, _logged); }
+        // Derive the counter from the restored grid instead of trusting the
+        // stored "lift_done": a restored session used to keep the PREVIOUS
+        // session's count, so the summary and the SetsDone field read "16 sets"
+        // for an 11-set workout.
+        recountLogged();
         return true;
+    }
+
+    // _setsDone is always the number of true flags in _logged - one source of
+    // truth, so no path can drift again.
+    private function recountLogged() as Void {
+        var n = 0;
+        for (var i = 0; i < _logged.size(); i++) {
+            var row = _logged[i] as Array;
+            for (var j = 0; j < row.size(); j++) {
+                if (row[j] as Boolean) { n++; }
+            }
+        }
+        _setsDone = n;
     }
 
     function clearSaved() as Void {
