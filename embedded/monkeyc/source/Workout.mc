@@ -19,6 +19,7 @@ import Toybox.Application;
 import Toybox.Attention;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.Time;
 import Toybox.Timer;
 import Toybox.WatchUi;
 
@@ -36,7 +37,8 @@ class WorkoutController {
     private var _reps;          // Array of Arrays of Numbers
     private var _started;       // workout in progress
     private var _session;       // ActivityRecording.Session
-    private var _sessionMs;
+    private var _startedAt;     // Time.now().value() when the session began; 0 = unknown
+    private var _finalElapsedMs; // elapsedMs() frozen at resolveSave(); -1 = not resolved yet
 
     private var _restRemaining;
     private var _restTotal;
@@ -58,6 +60,7 @@ class WorkoutController {
     private var _lapsAdded;
     private var _sessionStopped;
     private var _info;                  // last fetched exercise history
+    private var _historyIndex;          // which "recent" session the history list has open
 
     function initialize() {
         _days = LiftPlan.days();
@@ -76,7 +79,8 @@ class WorkoutController {
         _setIndex = 0;
         _started = false;
         _session = null;
-        _sessionMs = 0;
+        _startedAt = 0;
+        _finalElapsedMs = -1;
         _restRemaining = 0;
         _restTotal = 0;
         _restTimer = null;
@@ -97,6 +101,7 @@ class WorkoutController {
         _syncNote = "";
         _lapsAdded = 0;
         _info = null;
+        _historyIndex = 0;
         _sessionStopped = false;
         _resetEditable();
     }
@@ -175,9 +180,12 @@ class WorkoutController {
 
     function currentExerciseIndex() as Number { return _exIndex; }
 
+    // "" (not "done") when the cursor is past the end: "done" used to be
+    // rendered as an exercise name by the info/history/stats screens and even
+    // fetched from the backend (/watch/exercise?name=done).
     function currentExerciseName() as String {
         var exs = currentExercises();
-        if (_exIndex >= exs.size()) { return "done"; }
+        if (_exIndex >= exs.size()) { return ""; }
         return (exs[_exIndex] as Dictionary)[:name] as String;
     }
 
@@ -273,8 +281,12 @@ class WorkoutController {
     function startWorkout() as Void {
         if (_started) { return; }
         _started = true;
-        _sessionMs = System.getTimer();
+        _startedAt = Time.now().value();
+        _finalElapsedMs = -1;
         _lapsAdded = 0;
+        // A fresh session must never inherit a stashed body from a previous
+        // (possibly much older, possibly failed) workout.
+        clearPending();
         if (Toybox has :ActivityRecording) {
             _session = ActivityRecording.createSession({
                 :name     => "Liftosaur - " + dayName(_dayIndex),
@@ -473,7 +485,10 @@ class WorkoutController {
     }
 
     // ---- exercise info (previous session, from the backend) ----
-    function setExerciseInfo(dict as Dictionary or Null) as Void { _info = dict; }
+    function setExerciseInfo(dict as Dictionary or Null) as Void {
+        _info = dict;
+        _historyIndex = 0;   // fresh data: drop any stale selection into the old list
+    }
 
     function infoLoaded() as Boolean { return _info != null; }
 
@@ -568,42 +583,123 @@ class WorkoutController {
         return "top " + ((last as Dictionary)["top_weight"] as Number) + " lb";
     }
 
-    // One line per recent session: "09-10  5x240 3x275 2x305  top 305"
-    function infoRecentLines() as Array {
+    // Collapse consecutive equal (weight, reps) sets into "NxR W" groups (no
+    // units - callers add "lb" and their own spacing/line-wrapping). Shared by
+    // historySublabel() and historyDetailLines() so this run-collapsing logic
+    // exists in exactly one place instead of being copy-pasted again.
+    private function _groupRuns(sets as Array) as Array {
         var out = [];
-        if (_info == null) { return out; }
-        var rec = _info["recent"];
-        if (!(rec instanceof Array)) { return out; }
-        for (var i = 0; i < (rec as Array).size(); i++) {
-            var r = (rec as Array)[i] as Dictionary;
-            var date = r["date"] as String;
-            if (date.length() > 10) { date = date.substring(5, 10); }
-            var sets = r["sets"] as Array;
-            var body = "";
-            var prevW = -1;
-            var prevR = -1;
-            var run = 0;
-            for (var j = 0; j <= sets.size(); j++) {
-                var w = -1;
-                var rp = -1;
-                if (j < sets.size()) {
-                    var st = sets[j] as Dictionary;
-                    w = st["weight"] as Number;
-                    rp = st["reps"] as Number;
-                }
-                if (w == prevW and rp == prevR) { run++; }
-                else {
-                    if (run > 0) {
-                        if (body.length() > 0) { body += " "; }
-                        body += run + "x" + prevR + " " + prevW;
-                    }
-                    prevW = w; prevR = rp; run = 1;
-                }
+        var prevW = -1;
+        var prevR = -1;
+        var run = 0;
+        for (var j = 0; j <= sets.size(); j++) {
+            var w = -1;
+            var r = -1;
+            if (j < sets.size()) {
+                var st = sets[j] as Dictionary;
+                w = st["weight"] as Number;
+                r = st["reps"] as Number;
             }
-            out.add(date + "  " + body);
+            if (w == prevW and r == prevR) {
+                run++;
+            } else {
+                if (run > 0) { out.add(run + "x" + prevR + " " + prevW); }
+                prevW = w; prevR = r; run = 1;
+            }
         }
         return out;
     }
+
+    // ---- history list (one row per session, Task 7) ----
+    private function _historyRecordAt(index as Number) as Dictionary or Null {
+        if (_info == null) { return null; }
+        var rec = _info["recent"];
+        if (!(rec instanceof Array)) { return null; }
+        if (index < 0 or index >= (rec as Array).size()) { return null; }
+        return (rec as Array)[index] as Dictionary;
+    }
+
+    private function _monthDayLabel(date as String) as String {
+        // "YYYY-MM-DD ..." -> "Sep 10"
+        if (date.length() < 10) { return date; }
+        var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        var mm = (date.substring(5, 7) as String).toNumber();
+        var dd = date.substring(8, 10);
+        if (mm == null or mm < 1 or mm > 12) { return date.substring(5, 10); }
+        return (months[mm - 1] as String) + " " + dd;
+    }
+
+    function historyCount() as Number {
+        if (_info == null) { return 0; }
+        var rec = _info["recent"];
+        return (rec instanceof Array) ? (rec as Array).size() : 0;
+    }
+
+    // "Sep 10  -  top 305"
+    function historyLabel(index as Number) as String {
+        var rec = _historyRecordAt(index);
+        if (rec == null) { return "-"; }
+        var date = _monthDayLabel(rec["date"] as String);
+        return date + "  -  top " + (rec["top_weight"] as Number);
+    }
+
+    // Compact, <= 22 chars: "5x240  3x275  2x305"
+    function historySublabel(index as Number) as String {
+        var rec = _historyRecordAt(index);
+        if (rec == null) { return ""; }
+        var groups = _groupRuns(rec["sets"] as Array);
+        var out = "";
+        for (var i = 0; i < groups.size(); i++) {
+            var g = groups[i] as String;
+            if ((out.length() + g.length() + 2) > 22) { break; }
+            out += out.equals("") ? g : "  " + g;
+        }
+        return out;
+    }
+
+    // That session's full grouped sets, one line per group, <= 20 chars.
+    function historyDetailLines(index as Number) as Array {
+        var lines = [];
+        var rec = _historyRecordAt(index);
+        if (rec == null) { return lines; }
+        var groups = _groupRuns(rec["sets"] as Array);
+        var cur = "";
+        for (var i = 0; i < groups.size(); i++) {
+            var g = groups[i] as String;
+            if ((cur.length() + g.length() + 3) > 20) {
+                if (!cur.equals("")) { lines.add(cur); }
+                cur = g;
+            } else {
+                cur = cur.equals("") ? g : cur + "   " + g;
+            }
+        }
+        if (!cur.equals("")) { lines.add(cur); }
+        return lines;
+    }
+
+    function historyDateText(index as Number) as String {
+        var rec = _historyRecordAt(index);
+        return rec == null ? "" : _monthDayLabel(rec["date"] as String);
+    }
+
+    function historyTopText(index as Number) as String {
+        var rec = _historyRecordAt(index);
+        return rec == null ? "" : "top " + (rec["top_weight"] as Number) + " lb";
+    }
+
+    function historyE1rmText(index as Number) as String {
+        var rec = _historyRecordAt(index);
+        return rec == null ? "" : "e1rm " + (rec["e1rm"] as Number) + " lb";
+    }
+
+    function historyVolumeText(index as Number) as String {
+        var rec = _historyRecordAt(index);
+        return rec == null ? "" : "volume " + (rec["volume"] as Number) + " lb";
+    }
+
+    function selectHistory(index as Number) as Void { _historyIndex = index; }
+    function selectedHistory() as Number { return _historyIndex; }
 
     function infoVolumeText() as String {
         if (_info == null) { return ""; }
@@ -651,6 +747,12 @@ class WorkoutController {
 
     // Ask the backend for this exercise's previous session (info screen).
     function requestExerciseInfo() as Void {
+        if (isFinished()) {
+            // Nothing to look up; the views show the session summary instead.
+            _info = null;
+            WatchUi.requestUpdate();
+            return;
+        }
         if (_comms != null) { _comms.fetchExerciseInfo(currentExerciseName()); }
     }
 
@@ -811,6 +913,7 @@ class WorkoutController {
         Application.Storage.setValue("lift_ex", _exIndex);
         Application.Storage.setValue("lift_set", _setIndex);
         Application.Storage.setValue("lift_started", _started);
+        Application.Storage.setValue("lift_started_at", _startedAt);
         Application.Storage.setValue("lift_done", _setsDone);
         Application.Storage.setValue("lift_total", _setsTotal);
         Application.Storage.setValue("lift_weights", joinNumbers(_weights));
@@ -830,6 +933,8 @@ class WorkoutController {
         _exIndex = Application.Storage.getValue("lift_ex") as Number;
         _setIndex = Application.Storage.getValue("lift_set") as Number;
         _started = Application.Storage.getValue("lift_started") as Boolean;
+        var startedAt = Application.Storage.getValue("lift_started_at");
+        _startedAt = (startedAt != null) ? (startedAt as Number) : 0;
         _setsDone = Application.Storage.getValue("lift_done") as Number;
         _setsTotal = Application.Storage.getValue("lift_total") as Number;
         var w = Application.Storage.getValue("lift_weights");
@@ -846,6 +951,7 @@ class WorkoutController {
         Application.Storage.deleteValue("lift_ex");
         Application.Storage.deleteValue("lift_set");
         Application.Storage.deleteValue("lift_started");
+        Application.Storage.deleteValue("lift_started_at");
         Application.Storage.deleteValue("lift_done");
         Application.Storage.deleteValue("lift_total");
         Application.Storage.deleteValue("lift_weights");
@@ -938,6 +1044,47 @@ class WorkoutController {
 
     // The body for POST /api/v1/watch/workout: only sets the user actually
     // completed, in the order they were trained.
+    // Scans for the last run of digits in a string and returns it as a Number
+    // (0 if there are none) - "Week 3" -> 3, "Day 5 - Light Pump (Wed)" -> 5.
+    private function _trailingNumber(s as String) as Number {
+        var len = s.length();
+        var end = -1;
+        var start = -1;
+        for (var i = len - 1; i >= 0; i--) {
+            var ch = s.substring(i, i + 1);
+            var isDigit = ch.equals("0") or ch.equals("1") or ch.equals("2") or
+                         ch.equals("3") or ch.equals("4") or ch.equals("5") or
+                         ch.equals("6") or ch.equals("7") or ch.equals("8") or ch.equals("9");
+            if (isDigit) {
+                if (end == -1) { end = i; }
+                start = i;
+            } else if (end != -1) {
+                break;
+            }
+        }
+        if (end == -1) { return 0; }
+        var n = s.substring(start, end + 1).toNumber();
+        return (n == null) ? 0 : n;
+    }
+
+    // "Week 3" -> 3. The day list spans every week-block, so the index into it
+    // is NOT the day of the week: a Week-3 day used to be uploaded as week 1,
+    // dayInWeek 15 and landed in the wrong slot in Liftosaur.
+    function weekNumber() as Number {
+        var d = currentDay();
+        if (d == null) { return 1; }
+        var sec = d[:section] as String;
+        var n = _trailingNumber(sec);
+        return n > 0 ? n : 1;
+    }
+
+    function dayInWeek() as Number {
+        var d = currentDay();
+        if (d == null) { return 1; }
+        var n = _trailingNumber(d[:name] as String);
+        return n > 0 ? n : 1;
+    }
+
     function buildWorkoutBody() as Dictionary or Null {
         var sets = [];
         var exs = currentExercises();
@@ -964,8 +1111,8 @@ class WorkoutController {
             :day => dayName(_dayIndex),
             :section => _section,
             :program => _program,
-            :week => 1,
-            :day_in_week => _dayIndex + 1,
+            :week => weekNumber(),
+            :day_in_week => dayInWeek(),
             :duration_s => elapsedMs() / 1000,
             :sets => sets
         };
@@ -1005,6 +1152,9 @@ class WorkoutController {
                       :amrap => (f[3] as String).equals("1")});
         }
         if (sets.size() == 0) { return false; }
+        // A stashed workout has no day context left (pendingText() doesn't
+        // carry week/day_in_week), so this can't call weekNumber()/dayInWeek()
+        // - leave the placeholders as-is deliberately.
         _pendingBody = {
             :day => fields[0], :section => fields[1], :program => fields[2],
             :duration_s => (fields[3] as String).toNumber(),
@@ -1020,6 +1170,14 @@ class WorkoutController {
     }
 
     function pendingSetCount() as Number { return _pendingSets; }
+
+    // The stashed body is cleared once it has actually been posted. It used to
+    // live for the rest of the run, so after a single retry EVERY later
+    // postWorkout() re-sent the old workout and the new one was never uploaded.
+    function clearPending() as Void {
+        _pendingBody = null;
+        _pendingSets = 0;
+    }
 
     private function _split(s as String, sep as String) as Array {
         var out = [];
@@ -1059,6 +1217,13 @@ class WorkoutController {
     }
 
     function resolveSave(save as Boolean) as Void {
+        if (!_started) {
+            // Already resolved once. The top button still re-opens the finish
+            // menu while sitting on the DONE screen (pre-existing, not changed
+            // here) - without this guard, choosing Save a second time would
+            // re-POST the same workout and create a duplicate Liftosaur record.
+            return;
+        }
         if (save) {
             // Hand the finished workout to the backend, which writes it into
             // Liftosaur. Failures are stashed and retried on the next launch.
@@ -1077,8 +1242,24 @@ class WorkoutController {
         } else if (save) {
             _activityNote = "nothing to save";
         }
+        // NOTE: deliberately NOT resetting _exIndex/_setIndex here (deviation
+        // from the plan's literal snippet - see PROGRESS.md Task 6 for why:
+        // isFinished() is cursor-based, and zeroing the cursor would make the
+        // DONE screen and the onBack() exit fix below both stop working the
+        // instant Save/Discard is chosen). selectDay() already resets the
+        // cursor and every editable field for any future workout attempt.
+        // Freeze the elapsed time BEFORE _started/_startedAt are cleared below:
+        // elapsedMs() reads !_started as "unknown" (0), so without this the
+        // DONE screen's elapsedText() would drop from the real duration to
+        // "0 min" the instant Save/Discard is chosen.
+        _finalElapsedMs = elapsedMs();
+        _awaitingReps = false;
+        _repsEditing = false;
         _started = false;
+        _startedAt = 0;
+        _sessionStopped = false;
         clearSaved();
+        clearPending();
     }
 
     // Reported on the finish screen: the user could not tell whether the
@@ -1088,8 +1269,24 @@ class WorkoutController {
     function setSyncNote(t as String) as Void { _syncNote = t; }
     function lapsAdded() as Number { return _lapsAdded; }
 
+    // Wall-clock, not System.getTimer(): the timer counts from BOOT, so a session
+    // restored after a restart used to report the device uptime as its duration
+    // (a 45-minute workout was recorded as 27138s). Clamped so a bad clock can
+    // never write an absurd number into the training record.
     function elapsedMs() as Number {
-        return _started ? (System.getTimer() - _sessionMs) : 0;
+        if (!_started or _startedAt <= 0) { return 0; }
+        var d = Time.now().value() - _startedAt;
+        if (d < 0 or d > 21600) { return 0; }
+        return d * 1000;
+    }
+
+    // ---- end-of-workout summary accessors (used once isFinished()) ----
+    function dayTitle() as String { return dayLabel(_dayIndex); }
+    function progressText() as String { return _setsDone + " of " + _setsTotal + " sets"; }
+    function elapsedText() as String {
+        var ms = (_finalElapsedMs >= 0) ? _finalElapsedMs : elapsedMs();
+        var mins = (ms / 1000) / 60;
+        return mins + " min";
     }
 }
 

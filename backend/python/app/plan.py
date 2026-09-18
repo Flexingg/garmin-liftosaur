@@ -376,7 +376,11 @@ def exercise_history(name: str, limit: int = 20) -> dict:
     return {
         "exercise": name,
         "last": sessions[0] if sessions else None,
-        "recent": sessions[:5],
+        # 12 sessions (not all 20 fetched): this travels to the watch over the
+        # https tunnel, so the payload is capped well short of get_history's
+        # limit to keep it small. See test_exercise_history_recent_is_capped_
+        # and_small in tests/test_watch_api.py for the measured size.
+        "recent": sessions[:12],
     }
 
 # ------------------------------------------------- week-aware program resolution

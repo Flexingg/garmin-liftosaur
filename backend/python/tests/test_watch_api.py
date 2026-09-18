@@ -242,6 +242,38 @@ def test_exercise_endpoint(monkeypatch):
     assert r.json()["last"]["top_weight"] == 305
 
 
+def test_exercise_history_recent_is_capped_and_small(monkeypatch):
+    """The history screen (Task 7) is a scrolling list fed by 'recent', not the
+    5-line fixed block it used to be - the server now sends up to 12 sessions
+    instead of 5. This travels to the watch over the https tunnel, so it must
+    stay small even at the new cap."""
+    import json as _json
+
+    records = []
+    for i in range(15):  # more than the 12-session cap
+        records.append({
+            "id": i,
+            "text": (f"2026-0{(i % 9) + 1}-10 08:00:00 +00:00 / program: \"P\" "
+                    f"/ dayName: \"Day 1\" / week: 1 / dayInWeek: 1 "
+                    f"/ duration: 3000s / exercises: {{\n"
+                    f"  Squat / 1x5 {220 + i}lb, 1x3 {250 + i}lb, 1x2 {280 + i}lb "
+                    f"/ target: 1x5 {220 + i}lb\n"
+                    f"}}"),
+        })
+    fixture = _json.dumps({"records": records})
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: fixture)
+
+    h = plan_mod.exercise_history("Squat")
+    assert len(h["recent"]) == 12  # capped, not all 15
+
+    r = client.get("/api/v1/watch/exercise", params={"name": "Squat"})
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["recent"]) == 12
+    size = len(_json.dumps(body).encode())
+    assert size < 4000, f"exercise_history JSON is {size} bytes, over the 4000-byte budget"
+
+
 # --- the watch's compact payload (form-encoded) -----------------------------
 
 def test_parse_compact_round_trips():
@@ -369,3 +401,76 @@ def test_query_payload_survives_url_escaping():
     w = parse_compact(decoded)
     assert w.sets[0].exercise == "Romanian Deadlift, Barbell"
     assert w.program == "5/3/1 BBB"
+
+
+# --- dry-run mode (verify the save path without writing to Liftosaur) -------
+
+def test_dry_run_renders_without_writing(monkeypatch):
+    """?dry_run=1 must render the Liftohistory text and must NOT call the MCP
+    write - this is how the payload is proven end to end without littering the
+    user's real training history."""
+    def must_not_be_called(name, args, **kw):
+        raise AssertionError("mcp_call must not run in dry-run mode")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", must_not_be_called)
+    raw = ("Day 1|Week 1|5/3/1 BBB - Squat/Bench/Deadlift/OHP|3600;"
+          "Squat|220|5|0;Squat|250|5|0")
+    # the test client encodes the query string itself (like the watch's
+    # urlEncode does over HTTP); passing raw text here mirrors that.
+    r = client.post("/api/v1/watch/workout",
+                    params={"payload": raw, "dry_run": 1})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["recorded"] is False
+    assert body["dry_run"] is True
+    assert body["sets"] == 2
+    assert 'program: "5/3/1 BBB - Squat/Bench/Deadlift/OHP"' in body["liftohistory"]
+    assert "Squat / 1x5 220lb, 1x5 250lb" in body["liftohistory"]
+
+
+def test_nul_separated_payload_is_rejected_with_a_clear_error():
+    """Regression marker for the Comms.urlEncode bug (commit d084048): every
+    '|', ';' and '/' in the payload was emitted as a NUL byte instead of its
+    percent-escape, so the header split into one field and the real save
+    attempts in the field all failed with 422. This is that exact shape."""
+    raw = ("Day 3|Week 1|5/3/1 BBB - Squat/Bench/Deadlift/OHP|27138;"
+          "Deadlift|210|5|0;Deadlift|235|5|0")
+    corrupted = raw.replace("|", "\x00").replace("/", "\x00").replace(";", "\x00")
+    r = client.post("/api/v1/watch/workout", params={"payload": corrupted})
+    assert r.status_code == 422
+    assert "malformed" in r.json()["detail"]
+
+
+def test_parse_compact_roundtrip_all_days():
+    """Every day in the real compiled plan (dist/plan.json, the source for
+    PlanData.mc) must round-trip through the compact-payload encoding the
+    watch actually sends: build the payload the same way pendingText() does,
+    URL-escape it, decode it, and parse it back."""
+    import json
+    import urllib.parse
+    from pathlib import Path
+    from app.watch_api import parse_compact
+
+    plan_path = Path(__file__).resolve().parents[3] / "dist" / "plan.json"
+    days = json.loads(plan_path.read_text())
+    assert len(days) > 0
+
+    for day in days:
+        expected = []
+        set_fields = []
+        for ex in day["exercises"]:
+            for s in ex["sets"]:
+                weight = int(round(s["weight"]))
+                reps = int(s["reps"])
+                amrap = bool(s["amrap"])
+                expected.append((ex["name"], weight, reps, amrap))
+                set_fields.append(f"{ex['name']}|{weight}|{reps}|{'1' if amrap else '0'}")
+        if not set_fields:
+            continue
+        raw = (f"{day['name']}|{day.get('section', '')}|Program|3600;"
+              + ";".join(set_fields))
+        escaped = urllib.parse.quote(raw, safe="")
+        decoded = urllib.parse.unquote(escaped)
+        w = parse_compact(decoded)
+        assert [(s.exercise, s.weight, s.reps, s.amrap) for s in w.sets] == [
+            (name, float(weight), reps, amrap) for name, weight, reps, amrap in expected]

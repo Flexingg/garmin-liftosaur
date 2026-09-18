@@ -200,7 +200,8 @@ def parse_compact(text: str) -> WorkoutIn:
 
 
 @router.post("/watch/workout")
-async def watch_workout(request: Request, payload: str | None = None) -> dict:
+async def watch_workout(request: Request, payload: str | None = None,
+                        dry_run: int = 0) -> dict:
     """Write a finished workout into Liftosaur as a history record.
 
     Accepts a JSON body (curl, the build tool, tests) AND the form-encoded
@@ -236,6 +237,9 @@ async def watch_workout(request: Request, payload: str | None = None) -> dict:
         raise HTTPException(status_code=422, detail="no sets to record")
 
     text = to_liftohistory(w, plan=None)
+    if dry_run:
+        return {"recorded": False, "dry_run": True, "sets": len(w.sets),
+                "liftohistory": text}
     try:
         raw = plan_mod.mcp_call("create_history_record", {"text": text})
     except plan_mod.LiftosaurError as exc:

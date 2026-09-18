@@ -100,12 +100,75 @@ offline, or the `program` field of the fetched plan.
 workout is stashed on the watch and retried on the next launch
 (`LiftComms.retryPending`). It is stored as a compact string because
 `Application.Storage` cannot hold nested dictionaries and the runtime has no JSON
-encoder.
+encoder. The stash key is `lift_pending_workout_v2` (bumped 2026-09-18, see below
+— the `v1` key is deliberately abandoned and never read again).
+
+### What went wrong: the `%00` encoder regression (2026-09-18)
+
+Commit `d084048` ("Fix the save crash for real (no POST body)") introduced
+`Comms.urlEncode()` to escape the workout payload for the query string, but it
+called `.toNumber()` on a **1-character String** instead of a **`Char`**:
+
+```monkeyc
+var code = ch.toNumber();            // "/".toNumber()  -> null   ("5".toNumber() -> 5)
+var v = (code == null) ? 0 : code;   // -> 0
+out += "%" + hex(...v...);           // -> "%00"  = a NUL byte
+```
+
+`String.toNumber()` parses a *number*, not a code point — it returns `null` for
+anything that isn't a numeral, which silently fell back to `0`. So every `|`,
+`;` and `/` in the payload was transmitted as `%00` instead of `%7C`/`%3B`/`%2F`.
+The live backend log for the user's actual save attempts showed it:
+
+```
+POST /api/v1/watch/workout?payload=Day%203%00Week%201%005%003%001%20BBB%20-%20Squat%00Bench%00Deadlift%00OHP%00...
+                                                                        ^^^^ all separators are NUL
+... HTTP/1.1" 422 Unprocessable Entity
+```
+
+`watch_api.parse_compact()` splits on `|`/`;`; with NULs it found one header
+field and raised `422 malformed payload header`. The **previous** build (before
+`d084048`) posted correctly at 15:39:58 the same day
+(`...Day%202%7CWeek%202%7C5%2F3%2F1%20BBB... HTTP/1.1" 200 OK`), confirming this
+was a regression in that one commit, not a flaw in the query-string design.
+
+Fixed 2026-09-18: `urlEncode()` now builds code points from `String.toCharArray()`
+/ `Char.toNumber()`, which never falls back to a numeral parse. RFC 3986:
+`A-Z a-z 0-9 - . _ ~` pass through unescaped; everything else becomes `%XX`.
+Never emits `%00` for a reserved character again (see the mutation proof in
+`tools/verify_watch_payload.py`, which copies the encoder and deliberately
+breaks it to prove the check itself can fail).
+
+A secondary bug rode along with this one: `Comms.onPostResponse()` stashed a
+failed payload for retry but never cleared it on success, so once anything had
+been retried, every later `postWorkout()` re-sent the stale stashed workout and
+the new one was silently never uploaded. `WorkoutController.clearPending()` is
+now called both on a successful post and at the start of every `startWorkout()`,
+and the stash key was bumped to `_v2` so any 422-era stash (which would replay
+today with a ~7.5-hour garbage duration — see docs/05) is simply abandoned
+rather than migrated.
 
 ## Verifying sync without the watch
 
 ```bash
 cd embedded/monkeyc
+python3 tools/verify_watch_payload.py                       # dry-run against the tunnel by default
+python3 tools/verify_watch_payload.py --backend http://127.0.0.1:8008
+```
+
+This mirrors the watch's exact compact-payload format and (fixed) `urlEncode()`
+in Python, checks every day in `dist/plan.json` for `%00`/length, and POSTs with
+`?dry_run=1` — the backend renders the Liftohistory text and reports it **without
+writing to Liftosaur** (`{"recorded": false, "dry_run": true, ...}`). The tool
+refuses to trust a response that doesn't explicitly confirm `dry_run: true`,
+because a backend process that predates the `dry_run` parameter silently ignores
+it and performs a real write — this happened once during development. `--live`
+exists for an end-to-end real write but must only be run with explicit sign-off;
+it is never part of routine verification.
+
+For a real write, use `plan_from_liftosaur.py --post` instead:
+
+```bash
 python3 tools/plan_from_liftosaur.py --post /tmp/test_workout.json   # writes a workout
 ```
 
@@ -113,5 +176,7 @@ Test against the **real** program name, then delete the record with the
 Liftosaur `delete_history_record` tool (it takes the returned id).
 
 Backend tests cover the format exhaustively — `backend/python/tests/test_watch_api.py`
-asserts the exact text, the grouping rules, the rejection-vs-success distinction
-and the section filter (`35 passed` as of this writing).
+asserts the exact text, the grouping rules, the rejection-vs-success distinction,
+the section filter, the dry-run mode, and the compact-payload round-trip for
+every day in the plan (`54 passed` as of this writing; `35` as previously
+documented here was already stale before this update).

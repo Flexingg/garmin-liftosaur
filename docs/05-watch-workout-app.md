@@ -102,6 +102,40 @@ recorded as a **strength training** workout (`SPORT_TRAINING` +
 `SUB_SPORT_STRENGTH_TRAINING`; note `SPORT_STRENGTH_TRAINING` does not exist on
 this device).
 
+## End-of-workout summary and exit paths (2026-09-18)
+
+Before this date, the cursor running past the last exercise made `currentExerciseName()`
+return the literal string `"done"`, which the info/history/stats screens then
+rendered as a title — and even fetched from the backend
+(`GET /api/v1/watch/exercise?name=done`). Fixed: `currentExerciseName()` now
+returns `""` once the workout is finished, `requestExerciseInfo()` never fetches
+that empty name, and every screen that would have shown it (`ExerciseInfoView`,
+`ExerciseHistoryView`, `ExerciseStatsView`, and the set screen's "done" branch)
+instead renders a **"WORKOUT COMPLETE"** summary: day title, `N of M sets`,
+elapsed time, and the activity/sync notes.
+
+There was also, before this date, **no way to leave the app**: `BACK` on a
+finished workout opened the "edit set" screen for a set that no longer existed,
+and the finish menu was the only thing BACK/SELECT ever popped, so the user was
+stuck on the DONE screen with no path to the day picker or out of the app
+entirely. Fixed:
+
+- `BACK` on the finished set screen now pops to the day picker instead of
+  opening the edit screen.
+- Hold `SELECT` on the set screen's options menu gained an **"Exit app (session
+  kept)"** item — saves the cursor and calls `System.exit()`. The next launch
+  restores the session via `onStart`/`restore()`.
+- Hold `SELECT` on the day picker gained an **"Exit app"** item for the same
+  reason, since BACK there is the picker's "choose" action, not an exit.
+
+Choosing Save/Discard still leaves the DONE summary on screen (it reports
+`saved to Garmin` / `synced to Liftosaur` / the failure, exactly as before) —
+only the cursor position is what determines "finished", and it is deliberately
+**not** reset by `resolveSave()` so this summary and the BACK-to-picker fix both
+keep working after the workout resolves. (`selectDay()` already resets the
+cursor and every editable field the next time any day is chosen, so this does
+not leak into a future workout.)
+
 ## Persistence
 
 Progress is written to `Application.Storage` on every set, and `onStart`
@@ -116,8 +150,39 @@ stored as nested arrays — which the API rejects.
 |---|---|---|---|
 | `SELECT` (top-right) / tap | log the set | end the rest | confirm the reps |
 | swipe up / down | weight +/- 5 lb | rest +/- 15 s | reps +/- 1 |
-| `BACK` | step back a set | end the rest | confirm the reps |
-| long-press `SELECT` | menu: next set, previous set, skip exercise, finish | | |
+| `BACK` | step back a set (or, once finished, return to the day picker) | end the rest | confirm the reps |
+| long-press `SELECT` | menu: view workout, exercise info, skip exercise, end workout, **exit app (session kept)** | | |
+
+The day picker also has a long-press `SELECT` menu now, with a single **"Exit
+app"** item — `BACK` on the picker stays the "choose this day" action, so it
+needed its own way out.
+
+## Exercise history (swipe down from the set screen)
+
+Swiping down from the set screen fetches the exercise's recent sessions from
+the backend and, once loaded, shows a **native scrolling list** (`Menu2`) —
+one row per session (`historyLabel`/`historySublabel`, e.g. "Sep 10  -  top
+305" / "5x220  5x250  5+x285"), tap a row for that session's full set
+breakdown plus top weight/e1rm/volume, `BACK` from the detail returns to the
+list, `BACK` from the list returns to the set screen. Before 2026-09-18 this
+was a fixed 5-line block with no per-line length cap, which overflowed the
+round bezel on long histories; the server also now sends up to 12 sessions
+instead of 5 (`app/plan.py`'s `exercise_history()`), still capped small enough
+to stay well under 4 KB over the https tunnel.
+
+## Duration, week, and day fields (corrected 2026-09-18)
+
+- **Duration** is wall-clock (`Time.now().value()` at start vs. at read time),
+  not `System.getTimer()` — the timer counts from device *boot*, so a session
+  restored after a watch restart used to report the device's uptime as the
+  workout duration (one real payload showed `duration: 27138s`, 7.5 hours, for
+  a ~45 minute session). Clamped to `[0, 21600]` seconds so a bad clock can
+  never write an absurd number into the Liftosaur record.
+- **`week`/`dayInWeek`** are derived from the chosen day's section ("Week 3" ->
+  3) and name ("Day 4" -> 4), not from the day's index in the full list.
+  Because the day list spans every week-block (all four weeks, deload
+  included), the index into it is not the day-of-week — a Week 3 day used to
+  upload as `week: 1, dayInWeek: 15` and land in the wrong slot in Liftosaur.
 
 Stepping back **un-logs** the set so it can be redone. The menu's "next set"
 skips *without* logging, which `SELECT` deliberately does not do (it would record
@@ -159,7 +224,11 @@ docs/06. It is the app that owns the training data.
 
 - **Reps are display-only.** Correcting an AMRAP set's actual reps needs a
   press/long-press input scheme verified on hardware; weights are editable now.
-- No sync-back to Liftosaur (needs https; see above).
+- Sync-back to Liftosaur now works over https (docs/06) — the "needs https"
+  gap this line used to describe is resolved; what's still open is
+  **hardware confirmation**: the fixed `Comms.urlEncode()` (2026-09-18) has
+  only been proven with the Python mirror in `tools/verify_watch_payload.py`,
+  not yet by an actual Save & finish on the device.
 - The deload section is parsed but not offered in the picker.
 - Weights come from `rm1`; if Liftosaur's `progress:` scripts have already moved
   the training max, the watch's numbers lag until the plan is regenerated.

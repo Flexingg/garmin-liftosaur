@@ -26,7 +26,10 @@ import Toybox.WatchUi;
 // hostname changes when it restarts; swap this for a named tunnel on a real
 // domain to make it permanent.
 const LIFT_BACKEND = "https://transcripts-forward-acdbentity-ascii.trycloudflare.com";
-const PENDING_KEY = "lift_pending_workout";
+// v1 key is deliberately abandoned: it held 422-era payloads (from the
+// %00-encoder bug) that would otherwise be re-posted today with a 7.5-hour
+// garbage duration. Bumping the key makes any old stashed value inert.
+const PENDING_KEY = "lift_pending_workout_v2";
 
 class LiftComms {
 
@@ -45,26 +48,35 @@ class LiftComms {
 
     // ---------------------------------------------------------------- encoding
 
-    // Minimal percent-encoding. String.replace() is not dependable across
-    // runtimes and the only character we actually see is the space in "Week 1".
+    // Percent-encode a string for use in a URL query (RFC 3986).
+    //
+    // Characters MUST come from toCharArray(): on a 1-character STRING,
+    // toNumber() parses a number ("5".toNumber() == 5) and returns null for
+    // anything else - so "/".toNumber() was null, fell back to 0, and this
+    // function emitted "%00" (NUL) for every reserved character. The whole
+    // workout payload then lost its "|" and ";" separators in flight and the
+    // backend rejected it with 422. Char.toNumber() gives the code point.
     function urlEncode(s as String) as String {
+        var hex = "0123456789ABCDEF";
         var out = "";
-        for (var i = 0; i < s.length(); i++) {
-            var ch = s.substring(i, i + 1);
-            if (ch.equals(" ")) {
-                out += "%20";
-            } else if (ch.equals("/") or ch.equals("?") or ch.equals("&") or ch.equals("#")
-                       or ch.equals("|") or ch.equals(";") or ch.equals(",") or ch.equals("+")) {
-                // Separators and reserved characters must be escaped now that the
-                // whole workout travels in the query string.
-                out += "%";
-                var code = ch.toNumber();
-                var hex = "0123456789ABCDEF";
-                var v = (code == null) ? 0 : code;
-                out += hex.substring((v / 16) % 16, ((v / 16) % 16) + 1);
-                out += hex.substring(v % 16, (v % 16) + 1);
+        var chars = s.toCharArray();
+        for (var i = 0; i < chars.size(); i++) {
+            var v = (chars[i] as Char).toNumber();
+            var unreserved = (v >= 0x41 and v <= 0x5A) or    // A-Z
+                             (v >= 0x61 and v <= 0x7A) or    // a-z
+                             (v >= 0x30 and v <= 0x39) or    // 0-9
+                             v == 0x2D or v == 0x5F or       // - _
+                             v == 0x2E or v == 0x7E;         // . ~
+            if (v < 0 or v > 0xFF) {
+                // Not a byte (the plan and exercise names are ASCII); never emit
+                // a stray "%" that would truncate the query.
+                out += "_";
+            } else if (unreserved) {
+                out += s.substring(i, i + 1);
             } else {
-                out += ch;
+                var hi = (v / 16) % 16;
+                var lo = v % 16;
+                out += "%" + hex.substring(hi, hi + 1) + hex.substring(lo, lo + 1);
             }
         }
         return out;
@@ -207,6 +219,7 @@ class LiftComms {
                             data as Dictionary or String or Null) as Void {
         if (responseCode >= 200 and responseCode < 300) {
             _posted = true;
+            _controller.clearPending();
             Application.Storage.deleteValue(PENDING_KEY);
             _controller.setSyncNote("synced to Liftosaur");
             System.println("Comms: workout recorded (" + responseCode + ")");

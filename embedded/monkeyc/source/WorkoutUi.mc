@@ -204,6 +204,15 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
         return choose();
     }
 
+    // Hold SELECT: the only real "leave the app" affordance. BACK stays the
+    // affirmative action on the picker (the user chose that map explicitly).
+    function onMenu() as Boolean {
+        var menu = new WatchUi.Menu2({ :title => "Liftosaur" });
+        menu.addItem(new WatchUi.MenuItem("Exit app", null, "exit", null));
+        WatchUi.pushView(menu, new PickerMenuDelegate(), WatchUi.SLIDE_UP);
+        return true;
+    }
+
     private function choose() as Boolean {
         if (_mode.equals("program")) {
             _c.chooseSelectedProgram();
@@ -215,6 +224,17 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
         _c.startWorkout();
         WatchUi.pushView(new SetView(_c), new SetDelegate(_c), WatchUi.SLIDE_LEFT);
         return true;
+    }
+}
+
+class PickerMenuDelegate extends WatchUi.Menu2InputDelegate {
+
+    function initialize() {
+        Menu2InputDelegate.initialize();
+    }
+
+    function onSelect(item as WatchUi.MenuItem) as Void {
+        System.exit();
     }
 }
 
@@ -249,14 +269,17 @@ class SetView extends WatchUi.View {
                          Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
             drawCentered(dc, c0 + 32, "of " + total + "s", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
-            // What is coming, so the rest is a glanceable decision.
-            drawCentered(dc, c0 + 70, "next  " + _c.currentExerciseName(),
-                         Graphics.FONT_XTINY, LIFT_TEXT_DIM);
-            drawCentered(dc, c0 + 90,
-                         _c.currentWeight().format("%d") + " lb x " +
-                         _c.currentReps().format("%d") +
-                         (_c.currentAmrap() ? "+" : ""),
-                         Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            // What is coming, so the rest is a glanceable decision. Guarded:
+            // an empty name (rest taken after the last set) would otherwise
+            // render as "next  " with a phantom "0 lb x 0" line under it.
+            var nextName = _c.currentExerciseName();
+            if (!nextName.equals("")) {
+                drawCentered(dc, c0 + 70, "next  " + nextName, Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+                drawCentered(dc, c0 + 90,
+                             _c.currentWeight().format("%d") + " lb x " +
+                             _c.currentReps().format("%d") + (_c.currentAmrap() ? "+" : ""),
+                             Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
             return;
         }
 
@@ -273,18 +296,20 @@ class SetView extends WatchUi.View {
             return;
         }
 
-        // ---- done
+        // ---- done (never shows an exercise name - there is no current exercise)
         if (_c.isFinished()) {
             drawRing(dc, 1.0, LIFT_PURPLE_TRACK, LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 - 56, "DONE", Graphics.FONT_MEDIUM, LIFT_TEXT);
-            drawCentered(dc, c0 - 12, _c.setsDone() + " of " + _c.setsTotal() + " sets",
+            drawCentered(dc, c0 - 30, _c.dayTitle(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 8, _c.setsDone() + " of " + _c.setsTotal() + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            drawCentered(dc, c0 + 14, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             if (!_c.activityNote().equals("")) {
-                drawCentered(dc, c0 + 14, _c.activityNote(), Graphics.FONT_XTINY,
+                drawCentered(dc, c0 + 36, _c.activityNote(), Graphics.FONT_XTINY,
                              LIFT_PURPLE_BRIGHT);
             }
             if (!_c.syncNote().equals("")) {
-                drawCentered(dc, c0 + 34, _c.syncNote(), Graphics.FONT_XTINY,
+                drawCentered(dc, c0 + 56, _c.syncNote(), Graphics.FONT_XTINY,
                              LIFT_TEXT_DIM);
             }
             drawCentered(dc, c0 + 92, "hold = options", Graphics.FONT_XTINY,
@@ -349,6 +374,12 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
     // Bottom button: edit this set.
     function onBack() as Boolean {
         if (_c.isResting()) { _c.skipRest(); return true; }
+        if (_c.isFinished()) {
+            // The workout is over: there is no current set to edit. Popping the set
+            // screen lands on the day picker, which is the only sane place to be.
+            WatchUi.popView(WatchUi.SLIDE_RIGHT);
+            return true;
+        }
         WatchUi.pushView(new AdjustView(_c), new AdjustDelegate(_c), WatchUi.SLIDE_LEFT);
         return true;
     }
@@ -360,6 +391,7 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         menu.addItem(new WatchUi.MenuItem("Exercise info", null, "info", null));
         menu.addItem(new WatchUi.MenuItem("Skip to next exercise", null, "skipex", null));
         menu.addItem(new WatchUi.MenuItem("End workout", null, "finish", null));
+        menu.addItem(new WatchUi.MenuItem("Exit app (session kept)", null, "exit", null));
         WatchUi.pushView(menu, new SetMenuDelegate(_c), WatchUi.SLIDE_UP);
         return true;
     }
@@ -447,6 +479,11 @@ class SetMenuDelegate extends WatchUi.Menu2InputDelegate {
             _c.skipExercise();
         } else if (id.equals("finish")) {
             _c.finishWorkout();
+        } else if (id.equals("exit")) {
+            // Cursor state is already persisted on every set; exiting mid-workout is
+            // safe and the session is restored on the next launch (onStart/restore).
+            _c.save();
+            System.exit();
         }
     }
 }
@@ -574,13 +611,32 @@ class ExerciseInfoView extends WatchUi.View {
     function initialize(c as WorkoutController) {
         View.initialize();
         _c = c;
-        _c.requestExerciseInfo();   // previous session comes from the backend
+        if (!_c.isFinished()) {
+            _c.requestExerciseInfo();   // previous session comes from the backend
+        }
     }
 
     function onUpdate(dc as Graphics.Dc) as Void {
         var c0 = dc.getHeight() / 2;
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
+        if (_c.isFinished()) {
+            // The workout is over: there is no current exercise, so show what the
+            // session actually did instead of a phantom exercise called "done".
+            drawRing(dc, 1.0, LIFT_PURPLE_TRACK, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 96, "WORKOUT COMPLETE", Graphics.FONT_SMALL, LIFT_TEXT);
+            drawCentered(dc, c0 - 56, _c.dayTitle(), Graphics.FONT_SMALL, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 12, _c.progressText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            drawCentered(dc, c0 + 12, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (!_c.activityNote().equals("")) {
+                drawCentered(dc, c0 + 40, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
+            if (!_c.syncNote().equals("")) {
+                drawCentered(dc, c0 + 60, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            }
+            drawCentered(dc, c0 + 120, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            return;
+        }
         drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
 
         // Stacked vertically, biggest facts first. A rolling stack (rather than
@@ -615,39 +671,139 @@ class ExerciseInfoView extends WatchUi.View {
     }
 }
 
-// Swipe down: the exercise's recent sessions, stacked newest first.
+// Swipe down: the exercise's recent sessions, one row per session, natively
+// scrollable - the old fixed 5-line block had no length cap and overflowed
+// the round bezel on long histories. History data is fetched asynchronously,
+// so this View is a small loading gate: once it arrives, it replaces itself
+// (WatchUi.switchToView, not pushView - so BACK from the list pops straight
+// back to the set screen, not back to this gate) with a native Menu2 list.
 class ExerciseHistoryView extends WatchUi.View {
 
     private var _c;
+    private var _switched;   // guards against calling switchToView() more than once
 
     function initialize(c as WorkoutController) {
         View.initialize();
         _c = c;
-        _c.requestExerciseInfo();
+        _switched = false;
+        if (!_c.isFinished()) {
+            _c.requestExerciseInfo();
+        }
     }
 
     function onUpdate(dc as Graphics.Dc) as Void {
         var c0 = dc.getHeight() / 2;
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
-        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
-        drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL,
-                     LIFT_TEXT);
-        drawCentered(dc, c0 - 92, "HISTORY", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
-        if (!_c.infoLoaded()) {
-            drawCentered(dc, c0 - 10, "loading...", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        if (_c.isFinished()) {
+            // The workout is over: there is no current exercise, so show what the
+            // session actually did instead of a phantom exercise called "done".
+            drawRing(dc, 1.0, LIFT_PURPLE_TRACK, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 96, "WORKOUT COMPLETE", Graphics.FONT_SMALL, LIFT_TEXT);
+            drawCentered(dc, c0 - 56, _c.dayTitle(), Graphics.FONT_SMALL, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 12, _c.progressText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            drawCentered(dc, c0 + 12, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (!_c.activityNote().equals("")) {
+                drawCentered(dc, c0 + 40, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
+            if (!_c.syncNote().equals("")) {
+                drawCentered(dc, c0 + 60, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            }
+            drawCentered(dc, c0 + 120, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             return;
         }
-        var lines = _c.infoRecentLines();
-        if (lines.size() == 0) {
-            drawCentered(dc, c0 - 10, "no history yet", Graphics.FONT_XTINY,
-                         LIFT_TEXT_DIM);
+        if (_c.infoLoaded()) {
+            if (_c.historyCount() > 0) {
+                if (!_switched) {
+                    _switched = true;
+                    WatchUi.switchToView(buildHistoryList(_c), new HistoryListDelegate(_c),
+                                         WatchUi.SLIDE_LEFT);
+                }
+                return;
+            }
+            drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+            drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL, LIFT_TEXT);
+            drawCentered(dc, c0 - 92, "HISTORY", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 10, "no history yet", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            return;
         }
-        for (var i = 0; i < lines.size() and i < 5; i++) {
-            drawCentered(dc, c0 - 60 + (i * 30), lines[i] as String,
-                         Graphics.FONT_XTINY,
-                         i == 0 ? LIFT_TEXT : LIFT_TEXT_DIM);
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL, LIFT_TEXT);
+        drawCentered(dc, c0 - 92, "HISTORY", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 - 10, "loading...", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+    }
+}
+
+function buildHistoryList(c as WorkoutController) as WatchUi.Menu2 {
+    var menu = new WatchUi.Menu2({ :title => c.currentExerciseName() });
+    var n = c.historyCount();
+    for (var i = 0; i < n; i++) {
+        menu.addItem(new WatchUi.MenuItem(c.historyLabel(i), c.historySublabel(i),
+                                          i.toString(), null));
+    }
+    return menu;
+}
+
+class HistoryListDelegate extends WatchUi.Menu2InputDelegate {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        Menu2InputDelegate.initialize();
+        _c = c;
+    }
+
+    // Tap a session -> its full set breakdown.
+    function onSelect(item as WatchUi.MenuItem) as Void {
+        var idx = (item.getId() as String).toNumber();
+        if (idx != null) {
+            _c.selectHistory(idx);
+            WatchUi.pushView(new HistoryDetailView(_c), new InfoDelegate(_c),
+                             WatchUi.SLIDE_LEFT);
         }
+    }
+
+    // Back out of the list, straight to the set screen (this Menu2 replaced
+    // the loading-gate View via switchToView, so there is nothing else to pop
+    // through).
+    function onBack() as Void {
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
+    }
+}
+
+// One session's full set breakdown, opened by tapping a row in the history
+// list. Read-only: InfoDelegate handles BACK/SELECT by just popping back to
+// the list.
+class HistoryDetailView extends WatchUi.View {
+
+    private var _c;
+
+    function initialize(c as WorkoutController) {
+        View.initialize();
+        _c = c;
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        var idx = _c.selectedHistory();
+        drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
+        drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL, LIFT_TEXT);
+        drawCentered(dc, c0 - 92, _c.historyDateText(idx), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+
+        var lines = _c.historyDetailLines(idx);
+        var y = c0 - 56;
+        for (var i = 0; i < lines.size() and i < 4; i++) {
+            drawCentered(dc, y, lines[i] as String, Graphics.FONT_SMALL, LIFT_TEXT);
+            y += 26;
+        }
+        y += 8;
+        drawCentered(dc, y, _c.historyTopText(idx) + "   " + _c.historyE1rmText(idx),
+                     Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        y += 22;
+        drawCentered(dc, y, _c.historyVolumeText(idx), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        drawCentered(dc, c0 + 140, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
     }
 }
 
@@ -659,13 +815,32 @@ class ExerciseStatsView extends WatchUi.View {
     function initialize(c as WorkoutController) {
         View.initialize();
         _c = c;
-        _c.requestExerciseInfo();
+        if (!_c.isFinished()) {
+            _c.requestExerciseInfo();
+        }
     }
 
     function onUpdate(dc as Graphics.Dc) as Void {
         var c0 = dc.getHeight() / 2;
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.clear();
+        if (_c.isFinished()) {
+            // The workout is over: there is no current exercise, so show what the
+            // session actually did instead of a phantom exercise called "done".
+            drawRing(dc, 1.0, LIFT_PURPLE_TRACK, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 96, "WORKOUT COMPLETE", Graphics.FONT_SMALL, LIFT_TEXT);
+            drawCentered(dc, c0 - 56, _c.dayTitle(), Graphics.FONT_SMALL, LIFT_PURPLE_BRIGHT);
+            drawCentered(dc, c0 - 12, _c.progressText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            drawCentered(dc, c0 + 12, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (!_c.activityNote().equals("")) {
+                drawCentered(dc, c0 + 40, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
+            if (!_c.syncNote().equals("")) {
+                drawCentered(dc, c0 + 60, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            }
+            drawCentered(dc, c0 + 120, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            return;
+        }
         drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
         drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL,
                      LIFT_TEXT);
