@@ -74,6 +74,7 @@ class WorkoutController {
     // ---- exit after finish (Task 1) ----
     private var _exitPending;      // finish resolved; waiting for the upload (or the watchdog)
     private var _exitTimer;        // one-shot watchdog
+    private var _exitRequestedAt;  // seconds, for the minimum on-screen dwell
 
     // ---- FIT developer fields (Task 2/3/4) ----
     private var _fExercise;   // LAP, STRING  - exercise name
@@ -150,6 +151,7 @@ class WorkoutController {
         _sessionStopped = false;
         _exitPending = false;
         _exitTimer = null;
+        _exitRequestedAt = 0;
         _fExercise = null;
         _fSetIndex = null;
         _fWeightLb = null;
@@ -1568,6 +1570,18 @@ class WorkoutController {
     // goes through LiftComms.onPostResponse) can never close the app.
     function finishExit() as Void {
         if (!_exitPending) { return; }
+        // Minimum dwell: the sync result is the whole point of the summary screen,
+        // and Session.save() has just written the FIT file. Without this the app
+        // can close ~0.3 s after Save when the upload is quick, so the user never
+        // reads "synced to Liftosaur".
+        var held = Time.now().value() - _exitRequestedAt;
+        if (held < 2) {
+            var waitMs = (2 - held) * 1000;
+            if (waitMs < 250) { waitMs = 250; }
+            var defer = new Timer.Timer();
+            defer.start(method(:finishExit), waitMs, false);
+            return;
+        }
         _exitPending = false;
         if (_exitTimer != null) { _exitTimer.stop(); _exitTimer = null; }
         stopRest();
@@ -1579,8 +1593,12 @@ class WorkoutController {
     function requestExit(waitForUpload as Boolean) as Void {
         if (_exitPending) { return; }
         _exitPending = true;
+        _exitRequestedAt = Time.now().value();
         WatchUi.requestUpdate();
         if (!waitForUpload) {
+            // Discard: nothing to read and nothing in flight - leave at once, so
+            // the minimum-dwell above must not apply.
+            _exitRequestedAt = Time.now().value() - 10;
             finishExit();
             return;
         }
