@@ -16,6 +16,19 @@ from app.watch_api import LoggedSet, WorkoutIn, to_liftohistory
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _reset_live_sync_state():
+    """The live-sync in-memory bookkeeping (record id -> stamp / set count) is
+    module-level state so it survives a backend restart's absence gracefully
+    in production, but that also means it survives between tests unless reset
+    - without this, a record id reused across two test functions (e.g. "111")
+    would carry a stale set count from an earlier test."""
+    from app import watch_api
+    watch_api._LIVE_STAMPS.clear()
+    watch_api._LIVE_SET_COUNTS.clear()
+    yield
+
+
 def _set(ex, w, reps, amrap=False):
     return LoggedSet(exercise=ex, weight=w, reps=reps, amrap=amrap)
 
@@ -439,6 +452,182 @@ def test_nul_separated_payload_is_rejected_with_a_clear_error():
     r = client.post("/api/v1/watch/workout", params={"payload": corrupted})
     assert r.status_code == 422
     assert "malformed" in r.json()["detail"]
+
+
+# --- live sync (create-then-update, one push per completed set) ------------
+
+def _live_payload(sets_suffix, started_at=None, duration=120):
+    head = f"Day 1|Week 1|5/3/1 BBB - Squat/Bench/Deadlift/OHP|{duration}"
+    if started_at is not None:
+        head += f"|{started_at}"
+    return head + ";" + sets_suffix
+
+
+def test_live_payload_without_a_record_creates_a_record(monkeypatch):
+    seen = {}
+
+    def fake_mcp(name, args, **kw):
+        seen["name"] = name
+        seen["text"] = args["text"]
+        return '{"id":"111"}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": ""})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True
+    assert body["id"] == "111"
+    assert seen["name"] == "create_history_record"
+    assert "Squat / 1x5 220lb" in seen["text"]
+
+
+def test_live_payload_with_a_record_updates_it(monkeypatch):
+    seen = {}
+
+    def fake_mcp(name, args, **kw):
+        seen["name"] = name
+        seen["args"] = args
+        return '{"id":"111"}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0;Squat|250|5|0"),
+                            "record": "111"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated"] is True
+    assert body["id"] == "111"
+    assert seen["name"] == "update_history_record"
+    assert seen["args"]["id"] == "111"
+    # a full replacement, not a delta - both sets present in one text
+    assert "Squat / 1x5 220lb, 1x5 250lb" in seen["args"]["text"]
+
+
+def test_update_falls_back_to_create_when_the_record_is_gone(monkeypatch):
+    calls = []
+
+    def fake_mcp(name, args, **kw):
+        calls.append(name)
+        if name == "update_history_record":
+            return "Record not found."
+        return '{"id":"222"}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": "stale-id"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True
+    assert body["id"] == "222"
+    assert calls == ["update_history_record", "create_history_record"]
+
+
+def test_a_stale_shorter_payload_does_not_shrink_the_record(monkeypatch):
+    def fake_mcp(name, args, **kw):
+        return '{"id":"111"}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    # first: 3 sets applied
+    r1 = client.post("/api/v1/watch/workout/live", params={
+        "payload": _live_payload("Squat|220|5|0;Squat|250|5|0;Squat|285|5|0"),
+        "record": "111"})
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["updated"] is True
+
+    # then: a late/out-of-order request with only 1 set must not write
+    def must_not_be_called(name, args, **kw):
+        raise AssertionError("mcp_call must not run for a stale payload")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", must_not_be_called)
+    r2 = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": "111"})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["skipped"] == "stale"
+
+
+def test_live_timestamp_is_stable_across_updates(monkeypatch):
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+    r1 = client.post("/api/v1/watch/workout/live", params={
+        "payload": _live_payload("Squat|220|5|0", started_at=1_700_000_000),
+        "record": "", "dry_run": 1})
+    r2 = client.post("/api/v1/watch/workout/live", params={
+        "payload": _live_payload("Squat|220|5|0;Squat|250|5|0", started_at=1_700_000_000),
+        "record": "111", "dry_run": 1})
+    line1 = r1.json()["liftohistory"].splitlines()[0]
+    line2 = r2.json()["liftohistory"].splitlines()[0]
+    assert line1.split(" / ")[0] == line2.split(" / ")[0]
+    assert line1.startswith("2023-11-14T22:13:20Z")
+
+
+def test_live_payload_without_started_at_still_parses(monkeypatch):
+    """A 4-field header (no 5th started_at field) must still parse."""
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": "",
+                            "dry_run": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["sets"] == 1
+
+
+def test_live_dry_run_writes_nothing(monkeypatch):
+    def must_not_be_called(name, args, **kw):
+        raise AssertionError("mcp_call must not run in dry-run mode")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", must_not_be_called)
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": "",
+                            "dry_run": 1})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["recorded"] is False
+    assert body["dry_run"] is True
+    assert body["id"] == "dry"
+
+
+# --- discard (delete the live record) ---------------------------------------
+
+def test_discard_deletes_the_record(monkeypatch):
+    seen = {}
+
+    def fake_mcp(name, args, **kw):
+        seen["name"] = name
+        seen["args"] = args
+        return '{"ok":true}'
+
+    monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    r = client.post("/api/v1/watch/workout/discard", params={"record": "111"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": True, "id": "111"}
+    assert seen["name"] == "delete_history_record"
+    assert seen["args"] == {"id": "111"}
+
+
+def test_discard_with_no_record_is_a_no_op(monkeypatch):
+    def must_not_be_called(name, args, **kw):
+        raise AssertionError("mcp_call must not run when there is no record")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", must_not_be_called)
+    r = client.post("/api/v1/watch/workout/discard", params={"record": ""})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": False, "reason": "no record"}
+
+
+def test_discard_of_a_missing_record_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: "Record not found.")
+    r = client.post("/api/v1/watch/workout/discard", params={"record": "gone"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": True, "id": "gone", "reason": "already gone"}
+
+
+def test_discard_dry_run_writes_nothing(monkeypatch):
+    def must_not_be_called(name, args, **kw):
+        raise AssertionError("mcp_call must not run in dry-run mode")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", must_not_be_called)
+    r = client.post("/api/v1/watch/workout/discard", params={"record": "111", "dry_run": 1})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": False, "dry_run": True, "id": "111"}
 
 
 def test_parse_compact_roundtrip_all_days():

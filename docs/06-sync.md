@@ -6,7 +6,9 @@ never to Liftosaur directly, so the Liftosaur API key never leaves the server.
 ```
 watch ──https──► backend ──► Liftosaur API
   GET  /api/v1/watch/plan?section=Week%201      compile the current program
-  POST /api/v1/watch/workout                    create_history_record
+  POST /api/v1/watch/workout                    create_history_record (end of workout)
+  POST /api/v1/watch/workout/live               create_history_record / update_history_record
+  POST /api/v1/watch/workout/discard            delete_history_record
 ```
 
 Baked into the app as a fallback: `source/PlanData.mc` (see docs/05). If the
@@ -148,6 +150,54 @@ and the stash key was bumped to `_v2` so any 422-era stash (which would replay
 today with a ~7.5-hour garbage duration — see docs/05) is simply abandoned
 rather than migrated.
 
+## Live sync: two more endpoints next to the write-back above
+
+`POST /api/v1/watch/workout/live` and `POST /api/v1/watch/workout/discard`
+push the workout to Liftosaur **while it is happening**, one push per
+completed set, rather than only at the end. See docs/05's "Live sync"
+section for the full lifecycle, the `Application.Storage` record-id
+handshake, and the guards. In brief:
+
+```
+POST /watch/workout/live?payload=<compact>&record=<id or "">&dry_run=<0|1>
+    record == ""  -> create_history_record, returns the new id
+    record set    -> update_history_record({"id": record, "text": <full text>})
+                     (a rejected update - the record is gone - falls back to
+                     create, so the workout is never lost)
+    dry_run=1     -> renders the text, never calls Liftosaur
+
+POST /watch/workout/discard?record=<id>&dry_run=<0|1>
+    record == ""  -> {"deleted": false, "reason": "no record"} (not an error)
+    otherwise     -> delete_history_record({"id": record})
+                     ("not found" is reported as deleted:true, reason:
+                     "already gone" - the user's intent is already satisfied)
+    dry_run=1     -> never calls Liftosaur
+```
+
+The compact payload gains an **optional 5th header field**, `started_at`
+(unix seconds, the watch's wall-clock session start):
+`day|section|program|duration_s|started_at;exercise|weight|reps|amrap;...`.
+A 4-field header (no `started_at`) still parses exactly as before - the
+end-of-workout post and any pre-existing stash keep working unchanged.
+
+`to_liftohistory()` gained a `stamp` parameter: when given, it overrides
+`finished_at`/`now()`, which is how a live record's date stays **fixed at the
+session start** across every update instead of creeping forward with each
+push. Priority order: the payload's `started_at` (stable across a backend
+restart), then a stamp the backend remembered in memory when the record was
+created, then `now()` as a last resort (which can shift a record's date once
+if the service restarted mid-session and the watch sent no `started_at`).
+
+**Never shrink a live record.** The backend keeps an in-memory
+`{record_id: highest_set_count_written}` map. A push carrying fewer sets than
+the last one already applied for that record is a late/out-of-order request,
+not real progress - it is refused (`{"skipped": "stale"}`) rather than
+overwriting the record with less data than it already has.
+
+Both endpoints share `watch_workout`'s rejection-vs-success discipline: a
+write is only reported as successful when Liftosaur's response is a JSON
+object carrying an `id`; anything else is a `502`, never a false success.
+
 ## Verifying sync without the watch
 
 ```bash
@@ -177,6 +227,7 @@ Liftosaur `delete_history_record` tool (it takes the returned id).
 
 Backend tests cover the format exhaustively — `backend/python/tests/test_watch_api.py`
 asserts the exact text, the grouping rules, the rejection-vs-success distinction,
-the section filter, the dry-run mode, and the compact-payload round-trip for
-every day in the plan (`54 passed` as of this writing; `35` as previously
-documented here was already stale before this update).
+the section filter, the dry-run mode, the compact-payload round-trip for every
+day in the plan, and (as of the live-sync addition) the create/update/stale/
+discard/dry-run behaviour of the two endpoints above (`65 passed` as of this
+writing; `54` as previously documented here was the pre-live-sync baseline).

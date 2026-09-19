@@ -5,8 +5,10 @@ compiled plan at the start of a workout and POSTs the sets it logged. This
 module is the only place that talks to Liftosaur on the watch's behalf.
 
 Endpoints (mounted under /api/v1):
-    GET  /watch/plan      compiled plan (app.plan.get_plan) + cache metadata
-    POST /watch/workout   logged sets -> Liftosaur history record
+    GET  /watch/plan            compiled plan (app.plan.get_plan) + cache metadata
+    POST /watch/workout         logged sets -> Liftosaur history record (end of workout)
+    POST /watch/workout/live    create-then-update one record, per completed set
+    POST /watch/workout/discard delete a live record the watch threw away
 """
 from __future__ import annotations
 
@@ -40,6 +42,10 @@ class WorkoutIn(BaseModel):
     duration_s: int = 0
     finished_at: int | None = Field(
         default=None, description="unix seconds; defaults to server time")
+    started_at: int | None = Field(
+        default=None,
+        description="unix seconds; the watch's wall-clock session start, from "
+                    "the compact payload's optional 5th header field")
     sets: list[LoggedSet] = []
 
 
@@ -94,13 +100,23 @@ def _target_notation(ex: dict) -> str:
     return ", ".join(parts)
 
 
-def to_liftohistory(w: WorkoutIn, plan: dict | None = None) -> str:
+def to_liftohistory(w: WorkoutIn, plan: dict | None = None,
+                    stamp: int | None = None) -> str:
     """Build the Liftohistory text for a finished workout.
 
     Pure function (no network) so the exact output is unit-tested: get this
     wrong and Liftosaur rejects the record, losing the user's session.
+
+    `stamp` (unix seconds), when given, overrides `w.finished_at`/now. The live
+    sync path (`watch_workout_live`) passes the same stamp on every update for
+    one record so the record's date stays fixed at the session start rather
+    than creeping forward with each set — without this, every update would
+    re-date the record to "now". Falling all the way back to `now()` (no
+    `stamp`, no `finished_at`) can still shift a record's date once, if the
+    service restarted mid-session and the watch sent no `started_at`.
     """
-    when = w.finished_at or int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+    when = stamp if stamp is not None else (
+        w.finished_at or int(_dt.datetime.now(_dt.timezone.utc).timestamp()))
     stamp = _dt.datetime.fromtimestamp(when, _dt.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
 
@@ -180,7 +196,10 @@ def parse_compact(text: str) -> WorkoutIn:
 
     The watch sends this rather than JSON because Connect IQ has no JSON encoder
     and makeWebRequest only accepts flat scalars as POST parameters.
-    Format: day|section|program|duration_s;exercise|weight|reps|amrap;...
+    Format: day|section|program|duration_s[|started_at];exercise|weight|reps|amrap;...
+    The 5th header field, started_at (unix seconds), is optional: a 4-field
+    header (the existing stash on watches that predate live sync) still parses
+    exactly as before.
     """
     head, _, rest = text.partition(";")
     fields = head.split("|")
@@ -195,8 +214,15 @@ def parse_compact(text: str) -> WorkoutIn:
             continue
         sets.append(LoggedSet(exercise=f[0], weight=float(f[1]),
                               reps=int(float(f[2])), amrap=f[3] == "1"))
+    started_at = None
+    if len(fields) >= 5 and fields[4]:
+        try:
+            started_at = int(float(fields[4]))
+        except ValueError:
+            started_at = None
     return WorkoutIn(day=fields[0], section=fields[1], program=fields[2],
-                     duration_s=int(float(fields[3])), sets=sets)
+                     duration_s=int(float(fields[3])), started_at=started_at,
+                     sets=sets)
 
 
 @router.post("/watch/workout")
@@ -263,3 +289,142 @@ async def watch_workout(request: Request, payload: str | None = None,
 
     return {"recorded": True, "id": created["id"], "sets": len(w.sets),
             "liftohistory": text}
+
+
+# --------------------------------------------------------------- live sync
+#
+# Push each completed set to Liftosaur as the workout happens: the record is
+# created on the first set and updated after every later one, so the user
+# watches it grow in the Liftosaur phone app, and a watch crash or dead
+# battery mid-session no longer loses the workout (the end-of-workout post
+# above remains the safety net for when the phone was out of range).
+#
+# In-memory only, keyed by the Liftosaur record id (always a string on the
+# wire: it travels as a URL query parameter). Both dicts are best-effort
+# bookkeeping, not a durable store - a service restart loses them, which is
+# exactly why the payload also carries `started_at` (see to_liftohistory).
+
+_LIVE_STAMPS: dict[str, int] = {}       # record id -> stamp used when created
+_LIVE_SET_COUNTS: dict[str, int] = {}   # record id -> highest set count written
+
+
+class _RecordRejected(Exception):
+    """Liftosaur answered a write with content that isn't a successful record
+    (the same 200-with-a-rejection-string shape watch_workout() guards against)."""
+
+
+def _write_result(raw: str) -> dict:
+    try:
+        obj = json.loads(raw)
+    except (TypeError, ValueError):
+        raise _RecordRejected(str(raw)[:300]) from None
+    if not isinstance(obj, dict) or "id" not in obj:
+        raise _RecordRejected(str(raw)[:300])
+    return obj
+
+
+def _live_stamp(record_id: str, started_at: int | None) -> int:
+    """Preference order: the payload's started_at (stable across a backend
+    restart), then the stamp remembered when this record was created, then
+    now() as a last resort."""
+    if started_at:
+        return started_at
+    if record_id and record_id in _LIVE_STAMPS:
+        return _LIVE_STAMPS[record_id]
+    return int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+
+
+def _create_live_record(text: str) -> object:
+    """create_history_record, validated the same way watch_workout() does.
+    Raises HTTPException (502) rather than returning on a rejected write - a
+    rejection here must never be reported as a success."""
+    try:
+        raw = plan_mod.mcp_call("create_history_record", {"text": text})
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    try:
+        created = _write_result(raw)
+    except _RecordRejected as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Liftosaur did not create the record: {exc}") from exc
+    return created["id"]
+
+
+@router.post("/watch/workout/live")
+async def watch_workout_live(payload: str | None = None, record: str = "",
+                             dry_run: int = 0) -> dict:
+    """Create the live record on the first set, update it on every later one.
+
+    `record` is the id the watch already holds ("" the first time). A
+    successful write returns the id the watch must remember for the next set.
+    """
+    if not payload:
+        raise HTTPException(status_code=422, detail="no payload field")
+    try:
+        w = parse_compact(payload)
+    except (ValueError, IndexError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not w.sets:
+        raise HTTPException(status_code=422, detail="no sets to record")
+
+    n = len(w.sets)
+    # Never shrink a live record: a late/out-of-order POST carrying fewer sets
+    # than the last one already applied for this record must not overwrite it.
+    if record and _LIVE_SET_COUNTS.get(record, 0) > n:
+        return {"id": record, "skipped": "stale", "sets": n}
+
+    stamp = _live_stamp(record, w.started_at)
+    text = to_liftohistory(w, plan=None, stamp=stamp)
+
+    if dry_run:
+        return {"recorded": False, "dry_run": True, "id": record or "dry",
+                "sets": n, "liftohistory": text}
+
+    if not record:
+        new_id = _create_live_record(text)
+        rid = str(new_id)
+        _LIVE_STAMPS[rid] = stamp
+        _LIVE_SET_COUNTS[rid] = n
+        return {"id": new_id, "created": True, "sets": n}
+
+    try:
+        raw = plan_mod.mcp_call("update_history_record", {"id": record, "text": text})
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    try:
+        _write_result(raw)
+    except _RecordRejected:
+        # The record is gone (deleted or otherwise rejected) - never lose the
+        # workout, create a fresh one instead.
+        new_id = _create_live_record(text)
+        rid = str(new_id)
+        _LIVE_STAMPS[rid] = stamp
+        _LIVE_SET_COUNTS[rid] = n
+        return {"id": new_id, "created": True, "sets": n}
+
+    _LIVE_STAMPS.setdefault(record, stamp)
+    _LIVE_SET_COUNTS[record] = n
+    return {"id": record, "updated": True, "sets": n}
+
+
+@router.post("/watch/workout/discard")
+async def watch_workout_discard(record: str = "", dry_run: int = 0) -> dict:
+    """Delete a live record the watch is throwing away (decision #2: discard
+    leaves nothing behind in Liftosaur)."""
+    if dry_run:
+        return {"deleted": False, "dry_run": True, "id": record}
+    if not record:
+        # Nothing was ever synced for this workout - a normal case, not an error.
+        return {"deleted": False, "reason": "no record"}
+    try:
+        raw = plan_mod.mcp_call("delete_history_record", {"id": record})
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _LIVE_STAMPS.pop(record, None)
+    _LIVE_SET_COUNTS.pop(record, None)
+    # A "not found" reply already satisfies the user's intent - nothing left
+    # behind - so it is reported as a success, not a 502.
+    if "not found" in raw.lower():
+        return {"deleted": True, "id": record, "reason": "already gone"}
+    return {"deleted": True, "id": record}

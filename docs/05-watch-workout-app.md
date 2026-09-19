@@ -136,6 +136,66 @@ keep working after the workout resolves. (`selectDay()` already resets the
 cursor and every editable field the next time any day is chosen, so this does
 not leak into a future workout.)
 
+## Live sync (2026-09-18)
+
+Besides the end-of-workout post, the watch also pushes the workout-so-far to
+Liftosaur **after every completed set**, so the user watches the record grow
+in the Liftosaur phone app while training, and a watch crash or dead battery
+mid-session no longer loses the workout.
+
+**Lifecycle:**
+- The record is **created on the first completed set**, then **updated after
+  every later one** (`POST /api/v1/watch/workout/live`, see docs/06).
+- **Discard deletes the live record** — nothing is left behind in Liftosaur
+  (`POST /api/v1/watch/workout/discard`).
+- **Save updates the same record** instead of creating a second one:
+  `Comms.postWorkout()` now targets `/watch/workout/live` (not
+  `/watch/workout`) with whatever record id is held — "no id yet" behaves
+  exactly like today's plain create.
+
+**The record-id handshake** lives in `Application.Storage`:
+- `lift_live_record` — this session's live record id (String; absent = not
+  created yet). Set from the response's `id` field on every successful live
+  push, read by every later push/save/discard, and cleared by
+  `WorkoutController.clearSaved()`.
+- `lift_pending_record` — the id a *stashed* end-of-workout post must update,
+  so a retry after a failed save/app-relaunch does not create a second record
+  for the same session (see "Stash and retry" below).
+
+**No new UI.** Sync is deliberately silent (the user's decision): no
+"syncing…" line, no counters, and a failed live push never surfaces anything
+beyond a `System.println` log line — the input map and screen layout are
+unchanged.
+
+**Guards:**
+- *One live-sync request in flight at a time* (`Comms._liveInFlight` /
+  `_liveQueued`). A set completed while one is in flight is not dropped: it
+  sets a queued flag, and once the response lands, `postLiveSet()` re-reads
+  `WorkoutController.livePayload()` fresh — always the *current*, longer
+  payload, never a stale queued one.
+- *A live record can never shrink.* The backend remembers the highest set
+  count written per record and refuses (returns `skipped: "stale"`, writes
+  nothing) any later push carrying fewer sets — protection against a
+  late/out-of-order request clobbering the user's most recent sets.
+- *A failed live push is invisible and never stashed.* If the record was
+  deleted or the network failed, nothing partial is written to
+  `lift_pending_workout_v2`; the end-of-workout post still carries the
+  complete set list regardless, so no data is at risk.
+
+**The `started_at` timestamp rule.** The live payload's 5th header field is
+the wall-clock session start (`_startedAt`), so the backend can stamp the
+record with a *fixed* date across every update instead of re-dating it to
+"now" on each push (`to_liftohistory(..., stamp=...)`, docs/06). A stashed
+retry has no reliable `_startedAt` left (the session already ended), so it
+falls back to the plain 4-field `pendingText()` format; the backend then uses
+its own remembered stamp for that record, or `now()` as a last resort.
+
+**Honest caveat: writes are last-write-wins.** Liftosaur has no "in progress"
+record state, so the live record looks like a *completed* workout while it is
+still being trained. If the user edits that same record in the Liftosaur phone
+app while the watch is also pushing updates to it, whichever write lands last
+wins — there is no merge. The user has seen and accepted this.
+
 ## Persistence
 
 Progress is written to `Application.Storage` on every set, and `onStart`

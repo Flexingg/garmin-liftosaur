@@ -661,6 +661,9 @@ class WorkoutController {
             _logged[_exIndex][_setIndex] = true;
             recountLogged();
             markLap();
+            // Push the workout-so-far to Liftosaur. Decision #3: silent -
+            // postLiveSet() never surfaces failure and never blocks this call.
+            if (_comms != null) { _comms.postLiveSet(); }
         }
         var rest = currentRest();
         // advance within the exercise, then to the next exercise
@@ -1046,8 +1049,14 @@ class WorkoutController {
         if (_comms != null) { _comms.fetchExerciseInfo(currentExerciseName()); }
     }
 
-    // The compact payload to POST (live session, or a stashed retry).
-    function outgoingPayload() as String or Null { return pendingText(); }
+    // The compact payload to POST at finish: a stashed retry (_pendingBody set,
+    // no reliable _startedAt left) sends the 4-field pendingText(); a fresh
+    // end-of-workout save sends the 5-field livePayload() so the finish write
+    // keeps the same stable timestamp the live-sync updates used.
+    function outgoingPayload() as String or Null {
+        if (_pendingBody != null) { return pendingText(); }
+        return livePayload();
+    }
 
     // "Next set": logs the current set if it has not been logged yet (the
     // natural meaning of done-and-on), otherwise just advances.
@@ -1265,6 +1274,10 @@ class WorkoutController {
         Application.Storage.deleteValue("lift_weights");
         Application.Storage.deleteValue("lift_reps");
         Application.Storage.deleteValue("lift_logged");
+        // Live-sync bookkeeping: a stale id here would make some later,
+        // unrelated workout silently UPDATE this one's Liftosaur record.
+        Application.Storage.deleteValue("lift_live_record");
+        Application.Storage.deleteValue("lift_pending_record");
     }
 
     // ---------------------------------------------------------- program choice
@@ -1426,13 +1439,15 @@ class WorkoutController {
         };
     }
 
-    // Compact stash for a workout that could not be uploaded:
-    // "day|section|program|duration;Ex|w|r|a;Ex|w|r|a"
-    function pendingText() as String or Null {
-        var body = buildWorkoutBodyOrPending();
-        if (body == null) { return null; }
+    // Shared compact-string builder for pendingText()/livePayload():
+    // "day|section|program|duration[|startedAt];Ex|w|r|a;Ex|w|r|a"
+    // startedAt (the live-sync header field) is only appended when given.
+    private function _compact(body as Dictionary, startedAt as Number or Null) as String {
         var out = (body[:day] as String) + "|" + (body[:section] as String) + "|" +
                   (body[:program] as String) + "|" + (body[:duration_s] as Number);
+        if (startedAt != null) {
+            out += "|" + startedAt;
+        }
         var sets = body[:sets] as Array;
         for (var i = 0; i < sets.size(); i++) {
             var s = sets[i] as Dictionary;
@@ -1440,6 +1455,25 @@ class WorkoutController {
                    (s[:reps] as Number) + "|" + ((s[:amrap] as Boolean) ? "1" : "0");
         }
         return out;
+    }
+
+    // Compact stash for a workout that could not be uploaded:
+    // "day|section|program|duration;Ex|w|r|a;Ex|w|r|a"
+    function pendingText() as String or Null {
+        var body = buildWorkoutBodyOrPending();
+        if (body == null) { return null; }
+        return _compact(body, null);
+    }
+
+    // Live-sync payload: the same compact string as pendingText(), but always
+    // built from the CURRENT cursor (never a reloaded stash) and carrying the
+    // wall-clock session start as the 5th header field, so the backend can
+    // keep the live record's timestamp fixed across every update instead of
+    // re-dating it on each completed set.
+    function livePayload() as String or Null {
+        var body = buildWorkoutBody();
+        if (body == null) { return null; }
+        return _compact(body, _startedAt);
     }
 
     // Rebuild a stashed workout so it can be posted again.
@@ -1538,8 +1572,13 @@ class WorkoutController {
         var dispatched = false;
         if (save) {
             // Hand the finished workout to the backend, which writes it into
-            // Liftosaur. Failures are stashed and retried on the next launch.
+            // Liftosaur (updating the live record if one exists). Failures are
+            // stashed and retried on the next launch.
             if (_comms != null) { dispatched = _comms.postWorkout(); }
+        } else {
+            // Discard deletes the live record - nothing left behind in
+            // Liftosaur (decision #2). Fire-and-forget: never blocks the exit.
+            if (_comms != null) { _comms.discardLive(); }
         }
         if (_session != null) {
             if (save) {

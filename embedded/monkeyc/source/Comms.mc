@@ -31,16 +31,30 @@ const LIFT_BACKEND = "https://transcripts-forward-acdbentity-ascii.trycloudflare
 // garbage duration. Bumping the key makes any old stashed value inert.
 const PENDING_KEY = "lift_pending_workout_v2";
 
+// Live-sync record handshake (Application.Storage; String values, "" == none).
+// The literal key strings must match Workout.mc's clearSaved() exactly.
+const LIVE_RECORD_KEY = "lift_live_record";       // this session's live record id
+const PENDING_RECORD_KEY = "lift_pending_record"; // the id a stashed retry must UPDATE
+
 class LiftComms {
 
     private var _controller;
     private var _planOk;
     private var _posted;
+    private var _liveInFlight;   // one live-sync POST in flight at a time
+    private var _liveQueued;     // another set completed while one was in flight
+    private var _lastRecordId;   // the record id used for the last postWorkout() dispatch -
+                                  // remembered because clearSaved() wipes LIVE_RECORD_KEY from
+                                  // Storage synchronously, before the async response (and a
+                                  // possible stashPending()) arrives.
 
     function initialize(c as WorkoutController) {
         _controller = c;
         _planOk = false;
         _posted = false;
+        _liveInFlight = false;
+        _liveQueued = false;
+        _lastRecordId = "";
     }
 
     function planFetched() as Boolean { return _planOk; }
@@ -197,8 +211,24 @@ class LiftComms {
 
     // ----------------------------------------------------------------- workout
 
+    // The record id to send with the finish/retry POST: this session's live
+    // record if one exists, else the id a stashed retry must update, else "".
+    private function _recordForSave() as String {
+        var live = Application.Storage.getValue(LIVE_RECORD_KEY);
+        if (live != null) { return live as String; }
+        var pending = Application.Storage.getValue(PENDING_RECORD_KEY);
+        if (pending != null) { return pending as String; }
+        return "";
+    }
+
     // Returns true when a request was actually dispatched (so the caller knows
     // whether there is anything worth waiting for before the app exits).
+    //
+    // Posts to the LIVE endpoint (not /watch/workout): it already implements
+    // exactly what finish needs - create when no record id is held, update
+    // otherwise - so a Save updates the live record instead of duplicating it,
+    // and "no live record yet" behaves exactly like a plain create (today's
+    // behaviour, unchanged).
     function postWorkout() as Boolean {
         // The POST body path crashed twice: makeWebRequest serialises
         // `parameters` into the body and rejected both a nested dictionary and a
@@ -209,7 +239,9 @@ class LiftComms {
             System.println("Comms: nothing to post");
             return false;
         }
-        var url = LIFT_BACKEND + "/api/v1/watch/workout?payload=" + urlEncode(payload);
+        _lastRecordId = _recordForSave();
+        var url = LIFT_BACKEND + "/api/v1/watch/workout/live?payload=" + urlEncode(payload) +
+                  "&record=" + urlEncode(_lastRecordId);
         System.println("Comms: POST (query) " + url);
         Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_POST,
@@ -224,6 +256,8 @@ class LiftComms {
             _posted = true;
             _controller.clearPending();
             Application.Storage.deleteValue(PENDING_KEY);
+            Application.Storage.deleteValue(LIVE_RECORD_KEY);
+            Application.Storage.deleteValue(PENDING_RECORD_KEY);
             _controller.setSyncNote("synced to Liftosaur");
             System.println("Comms: workout recorded (" + responseCode + ")");
             WatchUi.requestUpdate();
@@ -248,6 +282,13 @@ class LiftComms {
         var text = _controller.pendingText();
         if (text == null or text.equals("")) { return; }
         Application.Storage.setValue(PENDING_KEY, text);
+        // So the retry UPDATES this same record instead of creating a second
+        // one. Read from _lastRecordId (not Storage): resolveSave() already
+        // ran clearSaved() by the time this failure callback fires, which has
+        // already wiped LIVE_RECORD_KEY.
+        if (_lastRecordId != null and !_lastRecordId.equals("")) {
+            Application.Storage.setValue(PENDING_RECORD_KEY, _lastRecordId);
+        }
     }
 
     function retryPending() as Void {
@@ -259,5 +300,75 @@ class LiftComms {
         }
         System.println("Comms: retrying a stashed workout");
         postWorkout();
+    }
+
+    // -------------------------------------------------------------- live sync
+
+    // Push the workout-so-far after each completed set: creates the record on
+    // the first set, updates it on every later one. Decision #3: silent -
+    // never surfaces a failure and never blocks the workout UI.
+    function postLiveSet() as Void {
+        // One request in flight at a time: a shorter payload landing after a
+        // longer one would overwrite the record with fewer sets. Queue instead
+        // and re-read the CURRENT (by-then-longer) payload once the in-flight
+        // request resolves.
+        if (_liveInFlight) {
+            _liveQueued = true;
+            return;
+        }
+        var payload = _controller.livePayload();
+        if (payload == null or payload.equals("")) { return; }
+        var recordId = Application.Storage.getValue(LIVE_RECORD_KEY);
+        var rid = (recordId != null) ? (recordId as String) : "";
+        var url = LIFT_BACKEND + "/api/v1/watch/workout/live?payload=" + urlEncode(payload) +
+                  "&record=" + urlEncode(rid);
+        _liveInFlight = true;
+        System.println("Comms: POST live " + url);
+        Communications.makeWebRequest(url, null, {
+            :method => Communications.HTTP_REQUEST_METHOD_POST,
+            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
+        }, method(:onLiveResponse));
+    }
+
+    function onLiveResponse(responseCode as Number,
+                            data as Dictionary or String or Null) as Void {
+        _liveInFlight = false;
+        if (responseCode >= 200 and responseCode < 300 and (data instanceof Dictionary)) {
+            var id = (data as Dictionary)["id"];
+            if (id != null) {
+                Application.Storage.setValue(LIVE_RECORD_KEY, id.toString());
+            }
+            System.println("Comms: live sync ok (" + responseCode + ")");
+        } else {
+            // Invisible to the user by design (decision #3): the end-of-workout
+            // post still carries the complete set list, so nothing is lost -
+            // and a partial payload is deliberately never stashed here.
+            System.println("Comms: live sync failed (" + responseCode + ")");
+        }
+        if (_liveQueued) {
+            _liveQueued = false;
+            postLiveSet();
+        }
+    }
+
+    // Discard deletes the live record - nothing left behind in Liftosaur
+    // (decision #2). Fire-and-forget: the id is cleared locally right away,
+    // whatever the network result turns out to be.
+    function discardLive() as Void {
+        var recordId = Application.Storage.getValue(LIVE_RECORD_KEY);
+        var rid = (recordId != null) ? (recordId as String) : "";
+        Application.Storage.deleteValue(LIVE_RECORD_KEY);
+        if (rid.equals("")) { return; }
+        var url = LIFT_BACKEND + "/api/v1/watch/workout/discard?record=" + urlEncode(rid);
+        System.println("Comms: POST discard " + url);
+        Communications.makeWebRequest(url, null, {
+            :method => Communications.HTTP_REQUEST_METHOD_POST,
+            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
+        }, method(:onDiscardResponse));
+    }
+
+    function onDiscardResponse(responseCode as Number,
+                               data as Dictionary or String or Null) as Void {
+        System.println("Comms: discard result (" + responseCode + ")");
     }
 }
