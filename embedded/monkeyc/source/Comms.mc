@@ -120,57 +120,6 @@ class LiftComms {
         return out;
     }
 
-    // ------------------------------------------------------- attach on launch
-
-    // Ask whether an in-progress workout already exists on Liftosaur (started
-    // from the phone, or a watch session that lost local state) so
-    // startWorkout() can attach to it instead of creating a second record.
-    // Best-effort like everything else here: a failure just means no attach
-    // happens, never a blocked workout.
-    function fetchActiveWorkout() as Void {
-        Communications.makeWebRequest(backendUrl() + "/api/v1/watch/workout/active", null, {
-            :method => Communications.HTTP_REQUEST_METHOD_GET,
-            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
-        }, method(:onActiveWorkoutResponse));
-    }
-
-    function onActiveWorkoutResponse(responseCode as Number,
-                                     data as Dictionary or String or Null) as Void {
-        if (responseCode != 200 or !(data instanceof Dictionary)) {
-            return;
-        }
-        var raw = data as Dictionary;
-        var extra = raw["extra_live_ids"];
-        if (extra instanceof Array and (extra as Array).size() > 0) {
-            System.println("Comms: extra live record(s) on Liftosaur, not attached: " + extra);
-        }
-        var stale = raw["stale_ids"];
-        if (stale instanceof Array and (stale as Array).size() > 0) {
-            System.println("Comms: stale live record(s) from a previous day, left alone: " + stale);
-        }
-        var active = raw["active"];
-        if (!(active instanceof Boolean) or !(active as Boolean)) {
-            return;
-        }
-        var rawSets = raw["sets"];
-        var sets = [];
-        if (rawSets instanceof Array) {
-            for (var i = 0; i < (rawSets as Array).size(); i++) {
-                var s = (rawSets as Array)[i];
-                if (!(s instanceof Dictionary)) { continue; }
-                var ss = s as Dictionary;
-                sets.add({:exercise => ss["exercise"], :weight => ss["weight"],
-                         :reps => ss["reps"], :amrap => ss["amrap"]});
-            }
-        }
-        _controller.setActiveAttach({
-            :id => raw["id"], :program => raw["program"], :day => raw["day"],
-            :started_at => raw["started_at"], :sets => sets
-        });
-        System.println("Comms: active live workout found (id " + raw["id"] + "), " +
-                       sets.size() + " sets to adopt");
-    }
-
     // -------------------------------------------------------------------- plan
 
     // The user's programs, so they can pick one on the watch.

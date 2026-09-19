@@ -667,46 +667,21 @@ def test_parse_compact_roundtrip_all_days():
             (name, float(weight), reps, amrap) for name, weight, reps, amrap in expected]
 
 
-# --- create-as-live / attach-on-launch (Part B) ------------------------------
+# --- create-as-live (Part B) --------------------------------------------------
 #
 # Real "no endTime" is not achievable through the MCP write surface (see the
 # module docstring in app/watch_api.py) - these tests cover the closest
 # approximation this backend actually implements: a LIVE_NOTE marker in the
 # record's notes, present while syncing and dropped only on finished=1.
+#
+# The attach-on-launch feature that used to sit next to these tests
+# (`/watch/workout/active`, `parse_liftohistory_record`) was removed
+# 2026-09-19: real-device testing confirmed a workout open in the phone app
+# is not discoverable through the history API at all, so it never achieved
+# what it was built for. See the module docstring in app/watch_api.py for the
+# full storage-sync investigation that settled this.
 
-import datetime as _dt_test
-
-from app.watch_api import LIVE_NOTE, parse_liftohistory_record
-
-
-def _today_str() -> str:
-    return _dt_test.datetime.now(_dt_test.timezone.utc).strftime("%Y-%m-%d")
-
-
-def _yesterday_str() -> str:
-    return (_dt_test.datetime.now(_dt_test.timezone.utc)
-             - _dt_test.timedelta(days=1)).strftime("%Y-%m-%d")
-
-
-def _live_record_text(date: str, sets_notation: str = "Squat / 1x5 220lb, 1x5 250lb",
-                      marker: bool = True, program: str = "5/3/1 BBB",
-                      day_name: str = "Day 1", week: int = 1, day_in_week: int = 1,
-                      duration_s: int = 300) -> str:
-    """A Liftosaur-serializer-shaped record (space-separated date, not our own
-    ISO form) - what get_history/get_history_record actually return, per
-    HISTORY_FIXTURE above."""
-    note = f"// {LIVE_NOTE}\n" if marker else ""
-    return (f'{note}{date} 08:00:00 +00:00 / program: "{program}"'
-           f' / dayName: "{day_name}" / week: {week} / dayInWeek: {day_in_week}'
-           f' / duration: {duration_s}s / exercises: {{\n'
-           f'  {sets_notation}\n}}')
-
-
-def _history_json(records: list[tuple[str, str]]) -> str:
-    """records: [(id, text), ...] -> the {"records": [...]}"" envelope
-    get_history returns."""
-    import json as _json
-    return _json.dumps({"records": [{"id": rid, "text": text} for rid, text in records]})
+from app.watch_api import LIVE_NOTE
 
 
 def test_live_post_defaults_to_marking_the_record_live(monkeypatch):
@@ -740,139 +715,3 @@ def test_finished_post_drops_the_live_marker(monkeypatch):
     assert r.status_code == 200, r.text
     assert LIVE_NOTE not in seen["text"]
 
-
-def test_parse_liftohistory_record_round_trips_our_own_format():
-    text = _live_record_text(_today_str())
-    parsed = parse_liftohistory_record(text)
-    assert parsed is not None
-    assert parsed["live"] is True
-    assert parsed["program"] == "5/3/1 BBB"
-    assert parsed["day_name"] == "Day 1"
-    assert parsed["week"] == 1
-    assert parsed["day_in_week"] == 1
-    assert [(s.exercise, s.weight, s.reps, s.amrap) for s in parsed["sets"]] == [
-        ("Squat", 220.0, 5, False), ("Squat", 250.0, 5, False)]
-
-
-def test_parse_liftohistory_record_reads_amrap_and_multiple_exercises():
-    text = _live_record_text(
-        _today_str(),
-        sets_notation=("Squat / 1x5 220lb, 1x5+ 285lb\n"
-                       "  Bench Press / 2x8 135lb"))
-    parsed = parse_liftohistory_record(text)
-    assert [(s.exercise, s.weight, s.reps, s.amrap) for s in parsed["sets"]] == [
-        ("Squat", 220.0, 5, False), ("Squat", 285.0, 5, True),
-        ("Bench Press", 135.0, 8, False), ("Bench Press", 135.0, 8, False)]
-
-
-def test_active_endpoint_reports_no_active_workout(monkeypatch):
-    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: _history_json([]))
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.status_code == 200
-    assert r.json() == {"active": False}
-
-
-def test_active_endpoint_ignores_a_finished_record_without_the_marker(monkeypatch):
-    """A completed (non-live) record must never be attached to - the marker
-    is the only signal this API has for "still going"."""
-    text = _live_record_text(_today_str(), marker=False)
-    monkeypatch.setattr(plan_mod, "mcp_call",
-                        lambda name, args, **kw: _history_json([("500", text)]))
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.status_code == 200
-    assert r.json() == {"active": False}
-
-
-def test_active_endpoint_attaches_to_a_same_day_live_record(monkeypatch):
-    text = _live_record_text(_today_str())
-    monkeypatch.setattr(plan_mod, "mcp_call",
-                        lambda name, args, **kw: _history_json([("500", text)]))
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["active"] is True
-    assert body["id"] == "500"
-    assert body["program"] == "5/3/1 BBB"
-    assert body["day"] == "Day 1"
-    assert body["week"] == 1
-    assert body["day_in_week"] == 1
-    assert len(body["sets"]) == 2
-    assert body["extra_live_ids"] == []
-    assert body["stale_ids"] == []
-
-
-def test_active_endpoint_never_silently_attaches_to_a_stale_previous_day_record(monkeypatch):
-    """No active workout older than today is attached to - it is reported
-    (stale_ids) and left alone instead."""
-    text = _live_record_text(_yesterday_str())
-    monkeypatch.setattr(plan_mod, "mcp_call",
-                        lambda name, args, **kw: _history_json([("400", text)]))
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["active"] is False
-    assert body["stale_ids"] == ["400"]
-
-
-def test_active_endpoint_with_two_live_records_attaches_to_the_most_recent(monkeypatch):
-    """Never leave two in-progress records ambiguous: attach to the most
-    recent (highest id = latest start) and report the other rather than
-    touching it."""
-    older = _live_record_text(_today_str(), sets_notation="Squat / 1x5 220lb")
-    newer = _live_record_text(_today_str(), sets_notation="Bench Press / 1x5 135lb",
-                              day_name="Day 2")
-    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: _history_json(
-        [("100", older), ("200", newer)]))
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["active"] is True
-    assert body["id"] == "200"
-    assert body["day"] == "Day 2"
-    assert body["extra_live_ids"] == ["100"]
-
-
-def test_attaching_seeds_the_never_shrink_guard_so_the_record_cannot_be_shrunk(monkeypatch):
-    """The core "no duplicate/no shrink" safety property: a record this
-    process never created (attached to, not made by watch_workout_live) must
-    still be protected by the never-shrink guard once attached."""
-    text = _live_record_text(_today_str(),
-                             sets_notation="Squat / 1x5 220lb, 1x5 250lb, 1x5 260lb")
-    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: _history_json(
-        [("700", text)]))
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.status_code == 200, r.text
-    assert r.json()["sets"] and len(r.json()["sets"]) == 3
-
-    def must_not_be_called(name, args, **kw):
-        raise AssertionError("mcp_call must not run for a stale/shorter payload")
-
-    monkeypatch.setattr(plan_mod, "mcp_call", must_not_be_called)
-    r2 = client.post("/api/v1/watch/workout/live",
-                     params={"payload": _live_payload("Squat|220|5|0"), "record": "700"})
-    assert r2.status_code == 200, r2.text
-    assert r2.json()["skipped"] == "stale"
-
-
-def test_attaching_then_a_full_length_update_still_succeeds(monkeypatch):
-    """The never-shrink guard seeded by attach must not over-trigger: a
-    same-length-or-longer update for the attached record must go through."""
-    text = _live_record_text(_today_str(), sets_notation="Squat / 1x5 220lb, 1x5 250lb")
-
-    def fake_get_history(name, args, **kw):
-        return _history_json([("800", text)])
-
-    monkeypatch.setattr(plan_mod, "mcp_call", fake_get_history)
-    r = client.get("/api/v1/watch/workout/active")
-    assert r.json()["sets"] and len(r.json()["sets"]) == 2
-
-    def fake_update(name, args, **kw):
-        assert name == "update_history_record"
-        return '{"id":"800"}'
-
-    monkeypatch.setattr(plan_mod, "mcp_call", fake_update)
-    r2 = client.post("/api/v1/watch/workout/live", params={
-        "payload": _live_payload("Squat|220|5|0;Squat|250|5|0;Squat|260|5|0"),
-        "record": "800"})
-    assert r2.status_code == 200, r2.text
-    assert r2.json()["updated"] is True

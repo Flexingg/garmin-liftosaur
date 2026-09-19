@@ -48,10 +48,6 @@ class LiftosaurApp extends Application.AppBase {
         _comms.fetchPrograms();
         // Anything that failed to upload last time goes now.
         _comms.retryPending();
-        // Ask Liftosaur whether a workout is already in progress there (phone
-        // app, or a watch session that lost local state) so startWorkout()
-        // can attach to it instead of creating a second record.
-        _comms.fetchActiveWorkout();
         if (_controller.restore()) {
             System.println("LiftWorkout: restored day " + (_controller.selectedDay() + 1) +
                            " at exercise " + (_controller.currentExerciseIndex() + 1));
