@@ -1,0 +1,13 @@
+<resources xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+  <!-- Runtime override for the backend URL (docs/06-sync.md "Configuring the
+       backend URL"). Empty by default: Comms.mc falls back to the compiled-in
+       LIFT_BACKEND constant until this is set, so a fresh install still works.
+       Editable without a rebuild via Garmin Express (device connected over
+       USB) or Garmin Connect Mobile's App Settings, once published - the
+       fix for a rotated cloudflared quick-tunnel hostname becomes "push a
+       new value here", not "recompile and re-sideload". -->
+  <properties>
+    <property id="backendUrl" type="string"></property>
+  </properties>
+</resources>

@@ -71,6 +71,13 @@ class WorkoutController {
     private var _info;                  // last fetched exercise history
     private var _historyIndex;          // which "recent" session the history list has open
 
+    // ---- attach to an existing live workout (Part B) ----
+    // Set once by Comms.mc's /watch/workout/active response; consumed (set
+    // back to null) the moment startWorkout() actually adopts it, so a later
+    // re-selected day never re-imports a session it already applied - or
+    // applies one that belongs to a different day than the one just started.
+    private var _activeAttach;   // Dictionary or Null: :id/:program/:day/:started_at/:sets
+
     // ---- exit after finish (Task 1) ----
     private var _exitPending;      // finish resolved; waiting for the upload (or the watchdog)
     private var _exitTimer;        // one-shot watchdog
@@ -99,6 +106,8 @@ class WorkoutController {
     private var _hrSum;
     private var _hrCount;
     private var _hrMax;
+    private var _hrLast;      // Number or Null - null means "no current reading" (sensor
+                               // off/not worn/null), never a stale or fabricated value.
 
     // ---- accelerometer (Task 4) ----
     private var _accelRate;        // Hz actually requested from the sensor
@@ -148,6 +157,7 @@ class WorkoutController {
         _lapsAdded = 0;
         _info = null;
         _historyIndex = 0;
+        _activeAttach = null;
         _sessionStopped = false;
         _exitPending = false;
         _exitTimer = null;
@@ -172,6 +182,7 @@ class WorkoutController {
         _hrSum = 0;
         _hrCount = 0;
         _hrMax = 0;
+        _hrLast = null;
         _accelRate = 0;
         _resetAccelAccumulators();
         _resetEditable();
@@ -201,6 +212,14 @@ class WorkoutController {
     function setProgram(name as String) as Void { _program = name; }
 
     function setComms(c as LiftComms) as Void { _comms = c; }
+
+    // The backend's answer to "is there an active live workout to attach
+    // to?" (GET /watch/workout/active), stashed for startWorkout() to apply
+    // once the user actually starts the matching day. Never applied here
+    // directly: it can arrive before the day picker even has a selection.
+    function setActiveAttach(attach as Dictionary or Null) as Void {
+        _activeAttach = attach;
+    }
 
     // The day currently highlighted in the picker.
     function selectedDay() as Number { return _dayIndex; }
@@ -374,6 +393,7 @@ class WorkoutController {
         // A fresh session must never inherit a stashed body from a previous
         // (possibly much older, possibly failed) workout.
         clearPending();
+        _applyActiveAttach();
         if (Toybox has :ActivityRecording) {
             _session = ActivityRecording.createSession({
                 :name     => "Liftosaur - " + dayName(_dayIndex) + " (" + _section + ")",
@@ -394,6 +414,83 @@ class WorkoutController {
             _activityNote = "recording unsupported";
         }
         save();
+    }
+
+    // ATTACH ON LAUNCH (Part B): if the backend found an in-progress workout
+    // on Liftosaur (started from the phone, or a previous watch session that
+    // lost local state) for the SAME program and day just started, adopt its
+    // record id, wall-clock start, and already-logged sets instead of
+    // starting a second one. Mirrors the native apps' loadActiveWorkout().
+    //
+    // Deliberately conservative: only applies on an exact program+day name
+    // match (a mismatch means the attach is for some other day - left
+    // completely alone, matching the "no active workout older than today"
+    // spirit of never touching something that isn't clearly this session).
+    // Consumes _activeAttach either way so a later re-selected day can never
+    // re-run this, and so this workout's own live posts never reapply it.
+    private function _applyActiveAttach() as Void {
+        var attach = _activeAttach;
+        _activeAttach = null;
+        if (attach == null) { return; }
+        var a = attach as Dictionary;
+        var attachDay = a[:day] as String;
+        var attachProgram = a[:program] as String;
+        if (attachDay == null or !attachDay.equals(dayName(_dayIndex))) { return; }
+        if (attachProgram == null or !attachProgram.equals(_program)) { return; }
+
+        var exs = currentExercises();
+        var nextSlot = [];
+        for (var i = 0; i < exs.size(); i++) { nextSlot.add(0); }
+
+        var sets = a[:sets] as Array;
+        for (var k = 0; k < sets.size(); k++) {
+            var s = sets[k] as Dictionary;
+            var exName = s[:exercise] as String;
+            var exIdx = -1;
+            for (var i = 0; i < exs.size(); i++) {
+                if ((exs[i] as Dictionary)[:name].equals(exName)) { exIdx = i; break; }
+            }
+            if (exIdx < 0) { continue; }
+            var slot = nextSlot[exIdx] as Number;
+            var planSets = (exs[exIdx] as Dictionary)[:sets] as Array;
+            // More real sets than the plan has slots for: cannot be represented
+            // in the fixed grid, so the overflow is skipped rather than crashing
+            // or corrupting a neighbouring exercise's row.
+            if (slot >= planSets.size()) { continue; }
+            _logged[exIdx][slot] = true;
+            _weights[exIdx][slot] = s[:weight] as Number;
+            _reps[exIdx][slot] = s[:reps] as Number;
+            nextSlot[exIdx] = slot + 1;
+        }
+        recountLogged();
+
+        // Cursor: the first not-yet-logged slot, scanning exercises in order -
+        // the same shape completeSet() leaves it in after a normal set.
+        _exIndex = exs.size();
+        _setIndex = 0;
+        var found = false;
+        for (var i = 0; i < exs.size() and !found; i++) {
+            var row = _logged[i] as Array;
+            for (var j = 0; j < row.size() and !found; j++) {
+                if (!(row[j] as Boolean)) {
+                    _exIndex = i;
+                    _setIndex = j;
+                    found = true;
+                }
+            }
+        }
+
+        Application.Storage.setValue("lift_live_record", a[:id] as String);
+        var startedAt = a[:started_at];
+        if (startedAt != null) {
+            // Same units this codebase already sends as the wire started_at
+            // (Time.now().value(), documented as unix seconds - docs/06-sync.md)
+            // - so elapsedMs() now correctly measures from the ORIGINAL start,
+            // not just from the moment this watch attached.
+            _startedAt = startedAt as Number;
+        }
+        _activityNote = "attached to live workout";
+        System.println("Workout: attached to live record " + (a[:id] as String));
     }
 
     // ------------------------------------------------------ FIT developer fields
@@ -529,20 +626,49 @@ class WorkoutController {
     // app-recorded activities).
     function hrTick() as Void {
         if (!(Toybox has :Sensor)) { return; }
+        var hr = null;
         try {
             var info = Sensor.getInfo();
             if (info != null and info.heartRate != null) {
-                var hr = info.heartRate as Number;
-                if (hr > 0 and hr < 250) {
-                    if (_fHr != null) { _fHr.setData(hr); }
-                    _hrSum += hr;
-                    _hrCount++;
-                    if (hr > _hrMax) { _hrMax = hr; }
-                }
+                var v = info.heartRate as Number;
+                if (v > 0 and v < 250) { hr = v; }
             }
         } catch (e) {
             // A bad/missing reading must never break the workout.
         }
+        // Honest absence: sensor off/not worn/null reports as no current
+        // reading (_hrLast = null), never 0 and never the previous tick's
+        // value held over as if it were live.
+        _hrLast = hr;
+        if (hr != null) {
+            if (_fHr != null) { _fHr.setData(hr); }
+            _hrSum += hr;
+            _hrCount++;
+            if (hr > _hrMax) { _hrMax = hr; }
+        }
+        WatchUi.requestUpdate();
+    }
+
+    // ---- heart rate display (never a fabricated value: "--" when absent) ----
+    function currentHrText() as String {
+        return (_hrLast != null) ? (_hrLast as Number).toString() : "--";
+    }
+
+    function avgHrText() as String {
+        return (_hrCount > 0) ? (_hrSum / _hrCount).toString() : "--";
+    }
+
+    function maxHrText() as String {
+        return (_hrMax > 0) ? _hrMax.toString() : "--";
+    }
+
+    function hasHrData() as Boolean { return _hrCount > 0; }
+
+    // One line for the working/stats screens: current bpm, plus the session
+    // average once there is one to show.
+    function hrLiveText() as String {
+        if (_hrCount > 0) { return currentHrText() + " bpm  avg " + avgHrText(); }
+        return currentHrText() + " bpm";
     }
 
     // ---------------------------------------------------------- accelerometer

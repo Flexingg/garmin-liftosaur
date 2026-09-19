@@ -8,12 +8,50 @@ Endpoints (mounted under /api/v1):
     GET  /watch/plan            compiled plan (app.plan.get_plan) + cache metadata
     POST /watch/workout         logged sets -> Liftosaur history record (end of workout)
     POST /watch/workout/live    create-then-update one record, per completed set
+    GET  /watch/workout/active  is there an in-progress workout to attach to?
     POST /watch/workout/discard delete a live record the watch threw away
+
+--- Why a "live" record still carries an endTime (read this before touching
+    the live-sync code) ---
+
+Liftosaur's own type (src/types.ts:977 in the upstream repo) treats a history
+record with NO endTime as "in progress". But the only write surface this
+backend has is the MCP tools create_history_record/update_history_record
+(lambda/mcp/tools.ts:189-214 upstream), which accept nothing but a Liftohistory
+`text` string, and that text is turned into a record by
+LiftohistoryDeserializer_deserialize (src/liftohistory/liftohistoryDeserializer.ts),
+called directly from ApiV1_createHistory/ApiV1_updateHistory
+(lambda/utils/apiv1.ts:161,243). That deserializer *unconditionally* computes
+`endTime = startTime + (durationSec ?? 0) * 1000` (liftohistoryDeserializer.ts:213-214)
+- there is no metadata key, no tool argument, and no code path that leaves it
+undefined. The native apps' real "in progress" signal is a completely
+different piece of state - `storage.progress`, read via
+`engine.getProgress(storageJson:)` in
+ios/LiftosaurWatch/Engine/WorkoutManager.swift:250-254 - and none of the 41
+MCP tools this backend can call touch `storage.progress` at all.
+
+So "no endTime" is not achievable through this API, full stop - not a bug to
+fix here, a hard boundary of the tool contract. What IS achievable, and what
+this module does:
+  1. `duration:` in the text is always the watch's real elapsed time as of
+     the moment it posts (Workout.mc's `elapsedMs()`), not a final fixed
+     value, so endTime keeps creeping forward with every live update instead
+     of jumping straight to a "finished" timestamp.
+  2. A record still being synced live carries a LIVE_NOTE marker as its
+     Liftosaur *notes* (visible to the user in the app, and legitimately
+     useful: "still going"). `to_liftohistory(..., live=True)` writes it,
+     `watch_workout_live(..., finished=1)` (the real finish path - see
+     Comms.mc postWorkout(), which POSTs to this same /live endpoint) leaves
+     it out, which is the only "finished" signal this backend can produce.
+  3. `watch_workout_active()` finds a record still carrying that marker to
+     implement attach-on-launch, since it is the one thing that
+     distinguishes "ours, still going" from "ours, done" or "not ours".
 """
 from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 import urllib.parse
 
 from fastapi import APIRouter, HTTPException, Request
@@ -22,6 +60,11 @@ from pydantic import BaseModel, Field
 from app import plan as plan_mod
 
 router = APIRouter()
+
+# Notes marker for a record still being live-synced (see module docstring).
+# Plain user-visible text by design: while a workout is going, the user
+# looking at the Liftosaur app sees why the record is still short/unfinished.
+LIVE_NOTE = "Synced live from Garmin watch — workout in progress."
 
 
 class LoggedSet(BaseModel):
@@ -101,8 +144,8 @@ def _target_notation(ex: dict) -> str:
 
 
 def to_liftohistory(w: WorkoutIn, plan: dict | None = None,
-                    stamp: int | None = None) -> str:
-    """Build the Liftohistory text for a finished workout.
+                    stamp: int | None = None, live: bool = False) -> str:
+    """Build the Liftohistory text for a workout.
 
     Pure function (no network) so the exact output is unit-tested: get this
     wrong and Liftosaur rejects the record, losing the user's session.
@@ -114,6 +157,10 @@ def to_liftohistory(w: WorkoutIn, plan: dict | None = None,
     re-date the record to "now". Falling all the way back to `now()` (no
     `stamp`, no `finished_at`) can still shift a record's date once, if the
     service restarted mid-session and the watch sent no `started_at`.
+
+    `live`, when true, prepends the LIVE_NOTE marker (see module docstring)
+    as the record's notes - the closest approximation this API can produce
+    of "in progress", since the record's endTime itself can never be omitted.
     """
     when = stamp if stamp is not None else (
         w.finished_at or int(_dt.datetime.now(_dt.timezone.utc).timestamp()))
@@ -129,9 +176,12 @@ def to_liftohistory(w: WorkoutIn, plan: dict | None = None,
                     targets[ex.get("name", "")] = ex
                 break
 
-    lines = [f'{stamp} / program: "{w.program or "Liftosaur"}"'
-             f' / dayName: "{w.day}" / week: {w.week} / dayInWeek: {w.day_in_week}'
-             f' / duration: {w.duration_s}s / exercises: {{']
+    lines = []
+    if live:
+        lines.append(f"// {LIVE_NOTE}")
+    lines.append(f'{stamp} / program: "{w.program or "Liftosaur"}"'
+                f' / dayName: "{w.day}" / week: {w.week} / dayInWeek: {w.day_in_week}'
+                f' / duration: {w.duration_s}s / exercises: {{')
     for name, sets in _group_sets(w.sets):
         line = f"  {name} / {_sets_notation(sets)}"
         tgt = targets.get(name)
@@ -142,6 +192,113 @@ def to_liftohistory(w: WorkoutIn, plan: dict | None = None,
         lines.append(line)
     lines.append("}")
     return "\n".join(lines) + "\n"
+
+
+# ------------------------------------------------------- reverse parsing (attach)
+
+_AMRAP_SET_RE = re.compile(
+    r"(\d+)\s*x\s*(\d+)(?:\|\d+)?(\+)?\s*(\d+(?:\.\d+)?)\s*(lb|kg)?")
+
+
+def _expand_sets(notation: str, exercise: str) -> list[LoggedSet]:
+    """Inverse of _sets_notation: 'NxR[+] Wlb, ...' -> individual LoggedSets."""
+    out: list[LoggedSet] = []
+    for chunk in notation.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        m = _AMRAP_SET_RE.match(chunk)
+        if not m:
+            continue
+        n = int(m.group(1))
+        reps = int(m.group(2))
+        amrap = m.group(3) == "+"
+        weight = float(m.group(4))
+        if m.group(5) == "kg":
+            weight *= 2.20462
+        for _ in range(n):
+            out.append(LoggedSet(exercise=exercise, weight=weight, reps=reps, amrap=amrap))
+    return out
+
+
+def _parse_liftohistory_date(date_str: str) -> int | None:
+    """Unix seconds from either date form Liftosaur emits: our own ISO
+    '2023-11-14T22:13:20Z' (round-tripped verbatim when nothing re-serializes
+    it) or Liftosaur's own serializer form '2026-09-13 08:37:19 +00:00'
+    (liftohistorySerializer.ts formatDate, what get_history/get_history_record
+    actually return). Returns None rather than guessing if neither matches."""
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S %z"):
+        try:
+            d = _dt.datetime.strptime(date_str, fmt)
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=_dt.timezone.utc)
+            return int(d.timestamp())
+        except ValueError:
+            continue
+    return None
+
+
+def parse_liftohistory_record(text: str) -> dict | None:
+    """Best-effort reverse of to_liftohistory(), for records this backend
+    itself wrote and is reading back via get_history/get_history_record.
+
+    NOT a general Liftohistory parser - it only has to survive a round trip
+    through Liftosaur's own serializer of text this backend generated (single
+    week/day form, "lb" or "kg", no warmup sets since to_liftohistory never
+    writes any). Returns None if the text doesn't even look like one exercises
+    block. Single-week programs serialize as '/ day: N' instead of
+    '/ dayName: "..." / week: N / dayInWeek: N' (liftohistorySerializer.ts
+    isMultiWeek branch) - handled by falling back to a synthesized day name,
+    since that case can't round-trip a real dayName/week/dayInWeek anyway.
+    """
+    lines = text.split("\n")
+    notes: list[str] = []
+    i = 0
+    while i < len(lines) and lines[i].startswith("// "):
+        notes.append(lines[i][3:])
+        i += 1
+    if i >= len(lines) or " / exercises: {" not in lines[i]:
+        return None
+    header = lines[i]
+    date_str = header.split(" / ")[0].strip()
+
+    def _find(pattern: str, cast=str, default=None):
+        m = re.search(pattern, header)
+        return cast(m.group(1)) if m else default
+
+    program = _find(r'program:\s*"([^"]*)"', default="")
+    day_name = _find(r'dayName:\s*"([^"]*)"', default="")
+    week = _find(r'week:\s*(\d+)', cast=int, default=1)
+    day_in_week = _find(r'dayInWeek:\s*(\d+)', cast=int, default=1)
+    if not day_name:
+        single_day = _find(r'(?<!In)day:\s*(\d+)', cast=int, default=None)
+        if single_day is not None:
+            day_name = f"Day {single_day}"
+            day_in_week = single_day
+    duration_s = _find(r'duration:\s*(\d+)s', cast=int, default=0)
+
+    sets: list[LoggedSet] = []
+    for line in lines[i + 1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//") or stripped == "}":
+            continue
+        if " / " not in stripped:
+            continue
+        ex_name, _, rest = stripped.partition(" / ")
+        completed = rest.split(" / target:")[0].split(" / warmup:")[0]
+        sets.extend(_expand_sets(completed, ex_name))
+
+    return {
+        "date": date_str,
+        "started_at": _parse_liftohistory_date(date_str),
+        "program": program,
+        "day_name": day_name,
+        "week": week,
+        "day_in_week": day_in_week,
+        "duration_s": duration_s,
+        "live": any(n.strip() == LIVE_NOTE for n in notes),
+        "sets": sets,
+    }
 
 
 # ----------------------------------------------------------------- endpoints
@@ -353,11 +510,17 @@ def _create_live_record(text: str) -> object:
 
 @router.post("/watch/workout/live")
 async def watch_workout_live(payload: str | None = None, record: str = "",
-                             dry_run: int = 0) -> dict:
+                             dry_run: int = 0, finished: int = 0) -> dict:
     """Create the live record on the first set, update it on every later one.
 
     `record` is the id the watch already holds ("" the first time). A
     successful write returns the id the watch must remember for the next set.
+
+    `finished=1` is the real finish path (Comms.mc postWorkout() posts here,
+    not to /watch/workout - see module docstring): the only difference is the
+    LIVE_NOTE marker is left out of the text, which is this API's only way to
+    say "done" (endTime itself can't be omitted either way - see module
+    docstring for why).
     """
     if not payload:
         raise HTTPException(status_code=422, detail="no payload field")
@@ -375,7 +538,7 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
         return {"id": record, "skipped": "stale", "sets": n}
 
     stamp = _live_stamp(record, w.started_at)
-    text = to_liftohistory(w, plan=None, stamp=stamp)
+    text = to_liftohistory(w, plan=None, stamp=stamp, live=not bool(finished))
 
     if dry_run:
         return {"recorded": False, "dry_run": True, "id": record or "dry",
@@ -406,6 +569,79 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
     _LIVE_STAMPS.setdefault(record, stamp)
     _LIVE_SET_COUNTS[record] = n
     return {"id": record, "updated": True, "sets": n}
+
+
+@router.get("/watch/workout/active")
+def watch_workout_active() -> dict:
+    """Is there an in-progress workout to attach to? Mirrors the native apps'
+    loadActiveWorkout() (ios/LiftosaurWatch/Engine/WorkoutManager.swift:250) -
+    but since this backend has no access to the `storage.progress` field that
+    mechanism actually reads (see module docstring), "in progress" here means
+    "a recent record this backend itself wrote still carries LIVE_NOTE".
+
+    Safety rules (all from the task, all load-bearing - see tests):
+      - more than one same-day live record -> attach to the most recent
+        (highest record id, i.e. the latest start), report the rest via
+        extra_live_ids rather than touching them;
+      - a live record from a previous day -> never silently attach; report
+        it via stale_ids and leave it alone;
+      - attaching seeds _LIVE_SET_COUNTS so a subsequent short/stale write to
+        this record is still rejected by the existing never-shrink guard in
+        watch_workout_live(), even though this process never created it.
+    """
+    try:
+        raw = plan_mod.mcp_call("get_history", {"limit": "20"})
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    try:
+        records = json.loads(raw).get("records", [])
+    except (ValueError, AttributeError):
+        records = []
+
+    live: list[tuple[str, dict]] = []
+    for rec in records:
+        if not isinstance(rec, dict) or "id" not in rec:
+            continue
+        parsed = parse_liftohistory_record(rec.get("text", ""))
+        if parsed and parsed["live"]:
+            live.append((str(rec["id"]), parsed))
+
+    if not live:
+        return {"active": False}
+
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    same_day = [(rid, p) for rid, p in live if p["date"][:10] == today]
+    stale_ids = [rid for rid, p in live if p["date"][:10] != today]
+
+    if not same_day:
+        # No active workout older than today is ever attached to silently -
+        # surface it and leave it alone.
+        return {"active": False, "stale_ids": stale_ids}
+
+    # Record ids are startTime-derived, so the highest id is the latest start
+    # - "attach to the most recent" when more than one is open right now.
+    same_day.sort(key=lambda t: int(t[0]) if t[0].isdigit() else 0, reverse=True)
+    chosen_id, chosen = same_day[0]
+    extra_live_ids = [rid for rid, _ in same_day[1:]]
+
+    # Prime the never-shrink guard for a record this process didn't create.
+    _LIVE_SET_COUNTS[chosen_id] = len(chosen["sets"])
+    if chosen["started_at"]:
+        _LIVE_STAMPS.setdefault(chosen_id, chosen["started_at"])
+
+    return {
+        "active": True,
+        "id": chosen_id,
+        "program": chosen["program"],
+        "day": chosen["day_name"],
+        "week": chosen["week"],
+        "day_in_week": chosen["day_in_week"],
+        "duration_s": chosen["duration_s"],
+        "started_at": chosen["started_at"],
+        "sets": [s.model_dump() for s in chosen["sets"]],
+        "extra_live_ids": extra_live_ids,
+        "stale_ids": stale_ids,
+    }
 
 
 @router.post("/watch/workout/discard")

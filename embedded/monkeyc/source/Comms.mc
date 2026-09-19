@@ -23,8 +23,11 @@ import Toybox.System;
 import Toybox.WatchUi;
 
 // Cloudflare quick tunnel in front of the backend (see docs/06). A quick tunnel
-// hostname changes when it restarts; swap this for a named tunnel on a real
-// domain to make it permanent.
+// hostname changes when it restarts; this is now only the FALLBACK default -
+// see backendUrl() below - because a rotated hostname used to require a full
+// rebuild + re-sideload to fix (nothing on the watch could point at the new
+// one). Swap this for a named tunnel on a real domain to make even the
+// fallback permanent.
 const LIFT_BACKEND = "https://transcripts-forward-acdbentity-ascii.trycloudflare.com";
 // v1 key is deliberately abandoned: it held 422-era payloads (from the
 // %00-encoder bug) that would otherwise be re-posted today with a 7.5-hour
@@ -59,6 +62,27 @@ class LiftComms {
 
     function planFetched() as Boolean { return _planOk; }
     function posted() as Boolean { return _posted; }
+
+    // ------------------------------------------------------------- backend url
+
+    // The endpoint is no longer baked into the binary alone: Application
+    // Properties ("backendUrl", resources/properties.xml + settings.xml) can
+    // be pushed from the phone (Garmin Express / Connect Mobile App Settings)
+    // without a rebuild - the actual fix for a rotated quick-tunnel hostname
+    // is now "push a new value", not "recompile and re-sideload". An
+    // empty/unset property (fresh install, or a device predating this
+    // setting) falls back to the compiled-in LIFT_BACKEND so the app still
+    // works out of the box.
+    private function backendUrl() as String {
+        try {
+            var v = Application.Properties.getValue("backendUrl");
+            if (v instanceof String and !(v as String).equals("")) { return v as String; }
+        } catch (e) {
+            // No properties.xml entry on an old build, or a bad value type -
+            // fall back rather than let a settings problem cost the workout.
+        }
+        return LIFT_BACKEND;
+    }
 
     // ---------------------------------------------------------------- encoding
 
@@ -96,11 +120,62 @@ class LiftComms {
         return out;
     }
 
+    // ------------------------------------------------------- attach on launch
+
+    // Ask whether an in-progress workout already exists on Liftosaur (started
+    // from the phone, or a watch session that lost local state) so
+    // startWorkout() can attach to it instead of creating a second record.
+    // Best-effort like everything else here: a failure just means no attach
+    // happens, never a blocked workout.
+    function fetchActiveWorkout() as Void {
+        Communications.makeWebRequest(backendUrl() + "/api/v1/watch/workout/active", null, {
+            :method => Communications.HTTP_REQUEST_METHOD_GET,
+            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
+        }, method(:onActiveWorkoutResponse));
+    }
+
+    function onActiveWorkoutResponse(responseCode as Number,
+                                     data as Dictionary or String or Null) as Void {
+        if (responseCode != 200 or !(data instanceof Dictionary)) {
+            return;
+        }
+        var raw = data as Dictionary;
+        var extra = raw["extra_live_ids"];
+        if (extra instanceof Array and (extra as Array).size() > 0) {
+            System.println("Comms: extra live record(s) on Liftosaur, not attached: " + extra);
+        }
+        var stale = raw["stale_ids"];
+        if (stale instanceof Array and (stale as Array).size() > 0) {
+            System.println("Comms: stale live record(s) from a previous day, left alone: " + stale);
+        }
+        var active = raw["active"];
+        if (!(active instanceof Boolean) or !(active as Boolean)) {
+            return;
+        }
+        var rawSets = raw["sets"];
+        var sets = [];
+        if (rawSets instanceof Array) {
+            for (var i = 0; i < (rawSets as Array).size(); i++) {
+                var s = (rawSets as Array)[i];
+                if (!(s instanceof Dictionary)) { continue; }
+                var ss = s as Dictionary;
+                sets.add({:exercise => ss["exercise"], :weight => ss["weight"],
+                         :reps => ss["reps"], :amrap => ss["amrap"]});
+            }
+        }
+        _controller.setActiveAttach({
+            :id => raw["id"], :program => raw["program"], :day => raw["day"],
+            :started_at => raw["started_at"], :sets => sets
+        });
+        System.println("Comms: active live workout found (id " + raw["id"] + "), " +
+                       sets.size() + " sets to adopt");
+    }
+
     // -------------------------------------------------------------------- plan
 
     // The user's programs, so they can pick one on the watch.
     function fetchPrograms() as Void {
-        Communications.makeWebRequest(LIFT_BACKEND + "/api/v1/watch/programs", null, {
+        Communications.makeWebRequest(backendUrl() + "/api/v1/watch/programs", null, {
             :method => Communications.HTTP_REQUEST_METHOD_GET,
             :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
         }, method(:onProgramsResponse));
@@ -122,7 +197,7 @@ class LiftComms {
     // NOTE: deliberately no ?section filter any more - the user wants the WHOLE
     // program (all week-blocks, deload included) on the watch.
     function fetchPlan(programId as String) as Void {
-        var url = LIFT_BACKEND + "/api/v1/watch/plan?program=" + urlEncode(programId);
+        var url = backendUrl() + "/api/v1/watch/plan?program=" + urlEncode(programId);
         System.println("Comms: GET " + url);
         Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_GET,
@@ -192,7 +267,7 @@ class LiftComms {
 
     // Previous session for one exercise, for the info screen.
     function fetchExerciseInfo(name as String) as Void {
-        var url = LIFT_BACKEND + "/api/v1/watch/exercise?name=" + urlEncode(name);
+        var url = backendUrl() + "/api/v1/watch/exercise?name=" + urlEncode(name);
         Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_GET,
             :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
@@ -240,8 +315,24 @@ class LiftComms {
             return false;
         }
         _lastRecordId = _recordForSave();
-        var url = LIFT_BACKEND + "/api/v1/watch/workout/live?payload=" + urlEncode(payload) +
-                  "&record=" + urlEncode(_lastRecordId);
+        // Stash BEFORE dispatching, not just on a confirmed failure: the
+        // 8s exit watchdog (Workout.mc requestExit()/finishExit()) can call
+        // System.exit() while this request is still in flight, which kills
+        // the process outright - onPostResponse() then never runs, so a
+        // stash written only from its failure branch would never happen and
+        // the finished workout would be silently lost with no retry queued.
+        // Stashing first and clearing only on a confirmed 2xx (below, and in
+        // onPostResponse()) makes the outcome watchdog-timing-independent:
+        // worst case a request that actually succeeded gets retried once
+        // more, which is a harmless update (same record id, same-or-longer
+        // set list, server-side never-shrink guard) rather than a loss.
+        stashPending();
+        // finished=1 is the ONLY way this backend can mark a record "done" -
+        // it can't omit endTime at all (see backend/python/app/watch_api.py's
+        // module docstring); this drops the LIVE_NOTE marker used to find it
+        // via /watch/workout/active instead.
+        var url = backendUrl() + "/api/v1/watch/workout/live?payload=" + urlEncode(payload) +
+                  "&record=" + urlEncode(_lastRecordId) + "&finished=1";
         System.println("Comms: POST (query) " + url);
         Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_POST,
@@ -255,9 +346,8 @@ class LiftComms {
         if (responseCode >= 200 and responseCode < 300) {
             _posted = true;
             _controller.clearPending();
-            Application.Storage.deleteValue(PENDING_KEY);
+            clearStashed();
             Application.Storage.deleteValue(LIVE_RECORD_KEY);
-            Application.Storage.deleteValue(PENDING_RECORD_KEY);
             _controller.setSyncNote("synced to Liftosaur");
             System.println("Comms: workout recorded (" + responseCode + ")");
             WatchUi.requestUpdate();
@@ -291,6 +381,13 @@ class LiftComms {
         }
     }
 
+    // Drop the durable retry state once a request has actually been
+    // confirmed to land (a 2xx for the finish POST or a live-sync set).
+    private function clearStashed() as Void {
+        Application.Storage.deleteValue(PENDING_KEY);
+        Application.Storage.deleteValue(PENDING_RECORD_KEY);
+    }
+
     function retryPending() as Void {
         var text = Application.Storage.getValue(PENDING_KEY);
         if (text == null) { return; }
@@ -318,9 +415,19 @@ class LiftComms {
         }
         var payload = _controller.livePayload();
         if (payload == null or payload.equals("")) { return; }
-        var recordId = Application.Storage.getValue(LIVE_RECORD_KEY);
-        var rid = (recordId != null) ? (recordId as String) : "";
-        var url = LIFT_BACKEND + "/api/v1/watch/workout/live?payload=" + urlEncode(payload) +
+        var rid = _recordForSave();
+        // Durable "latest known state": overwritten on every set (not just on
+        // a confirmed failure) and cleared only once a live-sync response for
+        // this state is confirmed (onLiveResponse() below) or the finish POST
+        // lands. This is what survives the tunnel being down for part of a
+        // workout, or the app being killed - retryPending() (called from
+        // onStart()) resends it at the next launch, updating the SAME record
+        // id (or creating one if none was ever confirmed); never a duplicate,
+        // since there is exactly one id remembered and the backend's
+        // never-shrink guard makes a resend of already-applied state a no-op.
+        _lastRecordId = rid;
+        stashPending();
+        var url = backendUrl() + "/api/v1/watch/workout/live?payload=" + urlEncode(payload) +
                   "&record=" + urlEncode(rid);
         _liveInFlight = true;
         System.println("Comms: POST live " + url);
@@ -338,11 +445,19 @@ class LiftComms {
             if (id != null) {
                 Application.Storage.setValue(LIVE_RECORD_KEY, id.toString());
             }
+            // Confirmed: this state has landed, so the durable retry copy
+            // stashed before the request (postLiveSet() above) is no longer
+            // needed. A set completed WHILE this request was in flight left
+            // _liveQueued set - postLiveSet() below re-stashes the newer
+            // state before sending it, so nothing is lost in that overlap.
+            clearStashed();
             System.println("Comms: live sync ok (" + responseCode + ")");
         } else {
-            // Invisible to the user by design (decision #3): the end-of-workout
-            // post still carries the complete set list, so nothing is lost -
-            // and a partial payload is deliberately never stashed here.
+            // Still invisible to the UI by design (decision #3) - but no
+            // longer silent to Storage: the payload this attempt carried is
+            // already durably stashed (postLiveSet() above), so it is not
+            // lost even if every later live-sync attempt also fails and the
+            // app never gets a chance to retry before the workout ends.
             System.println("Comms: live sync failed (" + responseCode + ")");
         }
         if (_liveQueued) {
@@ -359,7 +474,7 @@ class LiftComms {
         var rid = (recordId != null) ? (recordId as String) : "";
         Application.Storage.deleteValue(LIVE_RECORD_KEY);
         if (rid.equals("")) { return; }
-        var url = LIFT_BACKEND + "/api/v1/watch/workout/discard?record=" + urlEncode(rid);
+        var url = backendUrl() + "/api/v1/watch/workout/discard?record=" + urlEncode(rid);
         System.println("Comms: POST discard " + url);
         Communications.makeWebRequest(url, null, {
             :method => Communications.HTTP_REQUEST_METHOD_POST,

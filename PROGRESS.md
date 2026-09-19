@@ -1,3 +1,6 @@
+> **2026-09-19 session:** heart-rate-in-the-app + live-workout-state/attach work is tracked in
+> `PROGRESS-PARTB.md`, not here.
+
 # Progress — watch save/exit/history plan
 
 Plan: `.hermes/plans/2026-09-18_033318-watch-save-exit-history.md`

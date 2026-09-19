@@ -304,19 +304,23 @@ class SetView extends WatchUi.View {
             drawCentered(dc, c0 - 8, _c.setsDone() + " of " + _c.setsTotal() + " sets",
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             drawCentered(dc, c0 + 14, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (_c.hasHrData()) {
+                drawCentered(dc, c0 + 32, "avg " + _c.avgHrText() + " / max " +
+                             _c.maxHrText() + " bpm", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
             if (!_c.activityNote().equals("")) {
-                drawCentered(dc, c0 + 36, _c.activityNote(), Graphics.FONT_XTINY,
+                drawCentered(dc, c0 + 52, _c.activityNote(), Graphics.FONT_XTINY,
                              LIFT_PURPLE_BRIGHT);
             }
             if (!_c.syncNote().equals("")) {
-                drawCentered(dc, c0 + 56, _c.syncNote(), Graphics.FONT_XTINY,
+                drawCentered(dc, c0 + 72, _c.syncNote(), Graphics.FONT_XTINY,
                              LIFT_TEXT_DIM);
             }
             if (_c.exitPending()) {
-                drawCentered(dc, c0 + 74, "closing...", Graphics.FONT_XTINY,
+                drawCentered(dc, c0 + 90, "closing...", Graphics.FONT_XTINY,
                              LIFT_PURPLE_BRIGHT);
             } else {
-                drawCentered(dc, c0 + 92, "hold = options", Graphics.FONT_XTINY,
+                drawCentered(dc, c0 + 108, "hold = options", Graphics.FONT_XTINY,
                              LIFT_TEXT_DIM);
             }
             return;
@@ -338,6 +342,7 @@ class SetView extends WatchUi.View {
                      "set " + _c.currentSetNumber() + " of " +
                      _c.currentExerciseSetCount(),
                      Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        drawCentered(dc, c0 + 76, _c.hrLiveText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
     }
 }
 
@@ -633,11 +638,15 @@ class ExerciseInfoView extends WatchUi.View {
             drawCentered(dc, c0 - 56, _c.dayTitle(), Graphics.FONT_SMALL, LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 - 12, _c.progressText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             drawCentered(dc, c0 + 12, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (_c.hasHrData()) {
+                drawCentered(dc, c0 + 32, "avg " + _c.avgHrText() + " / max " +
+                             _c.maxHrText() + " bpm", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
             if (!_c.activityNote().equals("")) {
-                drawCentered(dc, c0 + 40, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+                drawCentered(dc, c0 + 52, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
             }
             if (!_c.syncNote().equals("")) {
-                drawCentered(dc, c0 + 60, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+                drawCentered(dc, c0 + 72, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             }
             drawCentered(dc, c0 + 120, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             return;
@@ -652,6 +661,8 @@ class ExerciseInfoView extends WatchUi.View {
         drawCentered(dc, y, "target " + _c.targetText(), Graphics.FONT_XTINY,
                      LIFT_PURPLE_BRIGHT);
         y += 24;
+        drawCentered(dc, y, _c.hrLiveText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        y += 22;
 
         if (!_c.infoLoaded()) {
             drawCentered(dc, y + 10, "loading last time...", Graphics.FONT_XTINY,
@@ -708,11 +719,15 @@ class ExerciseHistoryView extends WatchUi.View {
             drawCentered(dc, c0 - 56, _c.dayTitle(), Graphics.FONT_SMALL, LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 - 12, _c.progressText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             drawCentered(dc, c0 + 12, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (_c.hasHrData()) {
+                drawCentered(dc, c0 + 32, "avg " + _c.avgHrText() + " / max " +
+                             _c.maxHrText() + " bpm", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
             if (!_c.activityNote().equals("")) {
-                drawCentered(dc, c0 + 40, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+                drawCentered(dc, c0 + 52, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
             }
             if (!_c.syncNote().equals("")) {
-                drawCentered(dc, c0 + 60, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+                drawCentered(dc, c0 + 72, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             }
             drawCentered(dc, c0 + 120, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             return;
@@ -837,11 +852,15 @@ class ExerciseStatsView extends WatchUi.View {
             drawCentered(dc, c0 - 56, _c.dayTitle(), Graphics.FONT_SMALL, LIFT_PURPLE_BRIGHT);
             drawCentered(dc, c0 - 12, _c.progressText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             drawCentered(dc, c0 + 12, _c.elapsedText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            if (_c.hasHrData()) {
+                drawCentered(dc, c0 + 32, "avg " + _c.avgHrText() + " / max " +
+                             _c.maxHrText() + " bpm", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+            }
             if (!_c.activityNote().equals("")) {
-                drawCentered(dc, c0 + 40, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+                drawCentered(dc, c0 + 52, _c.activityNote(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
             }
             if (!_c.syncNote().equals("")) {
-                drawCentered(dc, c0 + 60, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+                drawCentered(dc, c0 + 72, _c.syncNote(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             }
             drawCentered(dc, c0 + 120, "back = return", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             return;
@@ -852,6 +871,7 @@ class ExerciseStatsView extends WatchUi.View {
         drawCentered(dc, c0 - 92, "STATS", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
         drawCentered(dc, c0 - 52, "target", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
         drawCentered(dc, c0 - 28, _c.targetText(), Graphics.FONT_SMALL, LIFT_TEXT);
+        drawCentered(dc, c0 - 4, _c.hrLiveText(), Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
         if (!_c.infoLoaded()) {
             drawCentered(dc, c0 + 20, "loading...", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             return;
