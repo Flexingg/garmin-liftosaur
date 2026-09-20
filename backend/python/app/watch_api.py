@@ -296,13 +296,38 @@ def watch_workout_current() -> dict:
             "name": e.get("name"),
             "sets": sets,
         })
+    day_data = cur.get("dayData") or {}
+    week_num = day_data.get("week")
+    day_in_week = day_data.get("dayInWeek")
+    raw_day_name = cur.get("dayName") or ""
+    watch_day_name = raw_day_name
+
+    try:
+        p = plan_mod.get_plan()
+        if p:
+            for d in p.get("days", []):
+                d_name = d.get("name", "")
+                d_sec = d.get("section", "")
+                if week_num and day_in_week:
+                    if f"Week {week_num}" in d_sec and (d_name.startswith(f"Day {day_in_week}") or f"Day {day_in_week}" in d_name):
+                        watch_day_name = d_name
+                        break
+                if d_name and (d_name in raw_day_name or raw_day_name in d_name):
+                    watch_day_name = d_name
+                    break
+    except Exception:
+        pass
+
     return {
         "active": True,
         "workout": {
             "startTime": cur.get("startTime"),
             "programId": cur.get("programId"),
             "programName": cur.get("programName"),
-            "dayName": cur.get("dayName"),
+            "dayName": watch_day_name,
+            "rawDayName": raw_day_name,
+            "week": week_num,
+            "dayInWeek": day_in_week,
             "entries": entries,
         }
     }
@@ -478,9 +503,14 @@ def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> bool:
     try:
         cur = plan_mod.workout_get_current()
         if not cur:
-            cur = plan_mod.workout_start(start_time=stamp * 1000)
+            cur = plan_mod.workout_start(
+                week=w.week, day_in_week=w.day_in_week, start_time=stamp * 1000
+            )
         if not cur or "entries" not in cur:
             return False
+
+        if not w.sets:
+            return True
 
         ex_groups: dict[str, list[LoggedSet]] = {}
         for s in w.sets:
@@ -554,7 +584,13 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
     except (ValueError, IndexError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not w.sets:
-        raise HTTPException(status_code=422, detail="no sets to record")
+        if finished:
+            return {"recorded": False, "sets": 0}
+        stamp = _live_stamp(record, w.started_at)
+        rest_synced = False
+        if not dry_run:
+            rest_synced = _sync_live_to_liftosaur(w, stamp)
+        return {"id": record or "", "started": True, "sets": 0, "rest_synced": rest_synced}
 
     n = len(w.sets)
     # Never shrink a live record: a late/out-of-order POST carrying fewer sets

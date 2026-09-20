@@ -803,3 +803,54 @@ def test_discard_triggers_rest_api_discard(monkeypatch):
     assert r.status_code == 200
     assert len(discard_called) == 1
 
+
+def test_live_payload_with_zero_sets_starts_active_workout(monkeypatch):
+    started_called = []
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: None)
+    monkeypatch.setattr(plan_mod, "workout_start", lambda **kw: started_called.append(kw) or {"entries": []})
+
+    head = "Day 1|Week 1|5/3/1 BBB - Squat/Bench/Deadlift/OHP|0|1700000000"
+    r = client.post("/api/v1/watch/workout/live", params={"payload": head, "record": ""})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["started"] is True
+    assert data["sets"] == 0
+    assert data["rest_synced"] is True
+    assert len(started_called) == 1
+    assert started_called[0]["week"] == 1
+    assert started_called[0]["day_in_week"] == 1
+
+
+def test_live_payload_zero_sets_finished_returns_no_record():
+    head = "Day 1|Week 1|5/3/1 BBB - Squat/Bench/Deadlift/OHP|0|1700000000"
+    r = client.post("/api/v1/watch/workout/live", params={"payload": head, "finished": 1})
+    assert r.status_code == 200
+    assert r.json()["recorded"] is False
+    assert r.json()["sets"] == 0
+
+
+def test_workout_current_resolves_watch_day_name(monkeypatch):
+    mock_active = {
+        "startTime": 1700000000000,
+        "programId": "p1",
+        "programName": "Prog",
+        "dayName": "Week 1 - Day 5 - Light Pump (Wed)",
+        "dayData": {"week": 1, "dayInWeek": 5},
+        "entries": []
+    }
+    mock_plan = {
+        "days": [
+            {"name": "Day 5 - Light Pump", "section": "Week 1", "exercises": []}
+        ]
+    }
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_active)
+    monkeypatch.setattr(plan_mod, "get_plan", lambda: mock_plan)
+
+    r = client.get("/api/v1/watch/workout/current")
+    assert r.status_code == 200
+    res = r.json()
+    assert res["active"] is True
+    assert res["workout"]["dayName"] == "Day 5 - Light Pump"
+    assert res["workout"]["rawDayName"] == "Week 1 - Day 5 - Light Pump (Wed)"
+
+

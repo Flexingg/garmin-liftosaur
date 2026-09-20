@@ -28,7 +28,7 @@ import Toybox.WatchUi;
 // rebuild + re-sideload to fix (nothing on the watch could point at the new
 // one). Swap this for a named tunnel on a real domain to make even the
 // fallback permanent.
-const LIFT_BACKEND = "https://transcripts-forward-acdbentity-ascii.trycloudflare.com";
+const LIFT_BACKEND = "https://them-pda-classifieds-experts.trycloudflare.com";
 // v1 key is deliberately abandoned: it held 422-era payloads (from the
 // %00-encoder bug) that would otherwise be re-posted today with a 7.5-hour
 // garbage duration. Bumping the key makes any old stashed value inert.
@@ -415,7 +415,7 @@ class LiftComms {
         _liveInFlight = false;
         if (responseCode >= 200 and responseCode < 300 and (data instanceof Dictionary)) {
             var id = (data as Dictionary)["id"];
-            if (id != null) {
+            if (id != null and !id.toString().equals("")) {
                 Application.Storage.setValue(LIVE_RECORD_KEY, id.toString());
             }
             // Confirmed: this state has landed, so the durable retry copy
@@ -446,7 +446,6 @@ class LiftComms {
         var recordId = Application.Storage.getValue(LIVE_RECORD_KEY);
         var rid = (recordId != null) ? (recordId as String) : "";
         Application.Storage.deleteValue(LIVE_RECORD_KEY);
-        if (rid.equals("")) { return; }
         var url = backendUrl() + "/api/v1/watch/workout/discard?record=" + urlEncode(rid);
         System.println("Comms: POST discard " + url);
         Communications.makeWebRequest(url, null, {

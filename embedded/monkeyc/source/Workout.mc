@@ -397,6 +397,7 @@ class WorkoutController {
             _activityNote = "recording unsupported";
         }
         save();
+        if (_comms != null) { _comms.postLiveSet(); }
     }
 
     // ------------------------------------------------------ FIT developer fields
@@ -1425,7 +1426,8 @@ class WorkoutController {
         if (!_started) {
             var targetDay = -1;
             for (var d = 0; d < dayCount(); d++) {
-                if (dayName(d).equals(dayStr)) {
+                var dn = dayName(d);
+                if (dn.equals(dayStr) or dayStr.find(dn) != null or dn.find(dayStr) != null) {
                     targetDay = d;
                     break;
                 }
@@ -1614,8 +1616,17 @@ class WorkoutController {
     // keep the live record's timestamp fixed across every update instead of
     // re-dating it on each completed set.
     function livePayload() as String or Null {
+        if (!_started) { return null; }
         var body = buildWorkoutBody();
-        if (body == null) { return null; }
+        if (body == null) {
+            body = {
+                :day => dayName(_dayIndex),
+                :section => _section,
+                :program => _program,
+                :duration_s => elapsedMs() / 1000,
+                :sets => []
+            };
+        }
         return _compact(body, _startedAt);
     }
 
