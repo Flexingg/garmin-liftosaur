@@ -266,6 +266,48 @@ def watch_exercise(name: str) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/watch/workout/current")
+def watch_workout_current() -> dict:
+    """Check if there is an active workout on Liftosaur (e.g. started or edited on phone).
+    Returns a clean, compact summary for the watch.
+    """
+    try:
+        cur = plan_mod.workout_get_current()
+    except plan_mod.LiftosaurError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not cur:
+        return {"active": False, "workout": None}
+    entries = []
+    for e in cur.get("entries", []):
+        sets = []
+        for s in e.get("sets", []):
+            completed = s.get("completed")
+            w_str = (completed.get("weight") if completed else s.get("weight")) or "0lb"
+            reps_val = (completed.get("reps") if completed else s.get("reps")) or 0
+            sets.append({
+                "setId": s.get("setId"),
+                "reps": reps_val,
+                "weight": int(round(plan_mod.parse_weight(w_str))),
+                "done": completed is not None,
+                "rest": s.get("timer") or 90,
+            })
+        entries.append({
+            "entryId": e.get("entryId"),
+            "name": e.get("name"),
+            "sets": sets,
+        })
+    return {
+        "active": True,
+        "workout": {
+            "startTime": cur.get("startTime"),
+            "programId": cur.get("programId"),
+            "programName": cur.get("programName"),
+            "dayName": cur.get("dayName"),
+            "entries": entries,
+        }
+    }
+
+
 
 
 def parse_compact(text: str) -> WorkoutIn:
@@ -428,6 +470,69 @@ def _create_live_record(text: str) -> object:
     return created["id"]
 
 
+def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> bool:
+    """Sync sets to Liftosaur active workout (/api/v1/workout/*).
+    Updates storage.progress[0] directly and triggers silent push to the phone.
+    Returns True if synced, False on failure.
+    """
+    try:
+        cur = plan_mod.workout_get_current()
+        if not cur:
+            cur = plan_mod.workout_start(start_time=stamp * 1000)
+        if not cur or "entries" not in cur:
+            return False
+
+        ex_groups: dict[str, list[LoggedSet]] = {}
+        for s in w.sets:
+            ex_groups.setdefault(s.exercise, []).append(s)
+
+        for ex_name, lsets in ex_groups.items():
+            entry = next(
+                (e for e in cur["entries"]
+                 if plan_mod.name_key(e.get("name", "")) == plan_mod.name_key(ex_name)),
+                None
+            )
+            if not entry or "sets" not in entry:
+                continue
+
+            for idx, ls in enumerate(lsets):
+                w_str = f"{int(round(ls.weight))}lb"
+                if idx < len(entry["sets"]):
+                    target_set = entry["sets"][idx]
+                    comp = target_set.get("completed")
+                    if comp and comp.get("reps") == ls.reps and comp.get("weight") == w_str:
+                        continue
+                    plan_mod.workout_log_set(entry["entryId"], target_set["setId"], ls.reps, w_str)
+                else:
+                    import secrets
+                    plan_mod.workout_log_set(
+                        entry["entryId"], secrets.token_hex(3), ls.reps, w_str, append=True
+                    )
+        return True
+    except Exception:
+        return False
+
+
+def _finish_live_on_liftosaur(stamp: int) -> bool:
+    try:
+        cur = plan_mod.workout_get_current()
+        if cur:
+            now_ms = int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
+            plan_mod.workout_finish(start_time=stamp * 1000, end_time=now_ms)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _discard_live_on_liftosaur(stamp: int) -> bool:
+    try:
+        plan_mod.workout_discard(start_time=stamp * 1000)
+        return True
+    except Exception:
+        return False
+
+
 @router.post("/watch/workout/live")
 async def watch_workout_live(payload: str | None = None, record: str = "",
                              dry_run: int = 0, finished: int = 0) -> dict:
@@ -464,12 +569,19 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
         return {"recorded": False, "dry_run": True, "id": record or "dry",
                 "sets": n, "liftohistory": text}
 
+    # Attempt real-time sync with Liftosaur REST API
+    rest_synced = False
+    if not finished:
+        rest_synced = _sync_live_to_liftosaur(w, stamp)
+    else:
+        rest_synced = _finish_live_on_liftosaur(stamp)
+
     if not record:
         new_id = _create_live_record(text)
         rid = str(new_id)
         _LIVE_STAMPS[rid] = stamp
         _LIVE_SET_COUNTS[rid] = n
-        return {"id": new_id, "created": True, "sets": n}
+        return {"id": new_id, "created": True, "sets": n, "rest_synced": rest_synced}
 
     try:
         raw = plan_mod.mcp_call("update_history_record", {"id": record, "text": text})
@@ -484,11 +596,11 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
         rid = str(new_id)
         _LIVE_STAMPS[rid] = stamp
         _LIVE_SET_COUNTS[rid] = n
-        return {"id": new_id, "created": True, "sets": n}
+        return {"id": new_id, "created": True, "sets": n, "rest_synced": rest_synced}
 
     _LIVE_STAMPS.setdefault(record, stamp)
     _LIVE_SET_COUNTS[record] = n
-    return {"id": record, "updated": True, "sets": n}
+    return {"id": record, "updated": True, "sets": n, "rest_synced": rest_synced}
 
 
 @router.post("/watch/workout/discard")
@@ -500,6 +612,17 @@ async def watch_workout_discard(record: str = "", dry_run: int = 0) -> dict:
     if not record:
         # Nothing was ever synced for this workout - a normal case, not an error.
         return {"deleted": False, "reason": "no record"}
+    
+    # Also discard in-progress workout on Liftosaur REST API
+    stamp = _LIVE_STAMPS.get(record)
+    if not stamp:
+        try:
+            stamp = int(record)
+        except ValueError:
+            stamp = None
+    if stamp:
+        _discard_live_on_liftosaur(stamp)
+
     try:
         raw = plan_mod.mcp_call("delete_history_record", {"id": record})
     except plan_mod.LiftosaurError as exc:

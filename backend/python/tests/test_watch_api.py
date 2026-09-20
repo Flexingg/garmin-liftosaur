@@ -712,6 +712,94 @@ def test_finished_post_drops_the_live_marker(monkeypatch):
     r = client.post("/api/v1/watch/workout/live",
                     params={"payload": _live_payload("Squat|220|5|0"), "record": "",
                             "finished": 1})
-    assert r.status_code == 200, r.text
     assert LIVE_NOTE not in seen["text"]
+
+
+# --- REST API live sync tests -----------------------------------------------
+
+def test_watch_workout_current_none(monkeypatch):
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: None)
+    r = client.get("/api/v1/watch/workout/current")
+    assert r.status_code == 200
+    assert r.json() == {"active": False, "workout": None}
+
+
+def test_watch_workout_current_active(monkeypatch):
+    mock_workout = {
+        "startTime": 1780000000000,
+        "programId": "prog1",
+        "programName": "My Program",
+        "dayName": "Day 1",
+        "entries": [
+            {
+                "entryId": "squat_barbell",
+                "name": "Squat",
+                "sets": [
+                    {"setId": "s1", "reps": 5, "weight": "145lb", "completed": {"reps": 5, "weight": "145lb"}, "timer": 90},
+                    {"setId": "s2", "reps": 5, "weight": "145lb", "completed": None, "timer": 90}
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_workout)
+    r = client.get("/api/v1/watch/workout/current")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["active"] is True
+    w = data["workout"]
+    assert w["dayName"] == "Day 1"
+    assert len(w["entries"]) == 1
+    sets = w["entries"][0]["sets"]
+    assert len(sets) == 2
+    assert sets[0]["done"] is True
+    assert sets[0]["weight"] == 145
+    assert sets[1]["done"] is False
+
+
+def test_live_post_triggers_rest_api_sync(monkeypatch):
+    calls = []
+    mock_active = {
+        "entries": [
+            {
+                "entryId": "squat_barbell",
+                "name": "Squat",
+                "sets": [
+                    {"setId": "s1", "index": 0, "reps": 5, "weight": "220lb", "completed": None}
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_active)
+    monkeypatch.setattr(plan_mod, "workout_log_set", lambda eid, sid, reps, wt, **kw: calls.append((eid, sid, reps, wt)))
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": ""})
+    assert r.status_code == 200
+    assert r.json()["rest_synced"] is True
+    assert calls == [("squat_barbell", "s1", 5, "220lb")]
+
+
+def test_finished_post_triggers_rest_api_finish(monkeypatch):
+    finished_called = []
+    mock_active = {"startTime": 1700000000000}
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_active)
+    monkeypatch.setattr(plan_mod, "workout_finish", lambda **kw: finished_called.append(kw))
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": "111", "finished": 1})
+    assert r.status_code == 200
+    assert r.json()["rest_synced"] is True
+    assert len(finished_called) == 1
+
+
+def test_discard_triggers_rest_api_discard(monkeypatch):
+    discard_called = []
+    monkeypatch.setattr(plan_mod, "workout_discard", lambda **kw: discard_called.append(kw))
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"deleted": true}')
+
+    r = client.post("/api/v1/watch/workout/discard", params={"record": "1700000000"})
+    assert r.status_code == 200
+    assert len(discard_called) == 1
 

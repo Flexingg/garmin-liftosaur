@@ -174,6 +174,7 @@ class LiftComms {
         _controller.adoptRemotePlan(days);
         _planOk = true;
         System.println("Comms: adopted remote plan (" + days.size() + " days)");
+        fetchCurrentWorkout();
     }
 
     // JSON gives string keys; the baked-in plan uses symbols. Normalise so the
@@ -231,6 +232,29 @@ class LiftComms {
             _controller.setExerciseInfo(null);
         }
         WatchUi.requestUpdate();
+    }
+
+    // Active workout sync: check if phone or outside client has an ongoing workout.
+    function fetchCurrentWorkout() as Void {
+        var url = backendUrl() + "/api/v1/watch/workout/current";
+        Communications.makeWebRequest(url, null, {
+            :method => Communications.HTTP_REQUEST_METHOD_GET,
+            :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
+        }, method(:onCurrentWorkoutResponse));
+    }
+
+    function onCurrentWorkoutResponse(responseCode as Number,
+                                      data as Dictionary or String or Null) as Void {
+        if (responseCode == 200 and (data instanceof Dictionary)) {
+            var active = (data as Dictionary)["active"];
+            if (active instanceof Boolean and (active as Boolean)) {
+                var w = (data as Dictionary)["workout"];
+                if (w instanceof Dictionary) {
+                    _controller.adoptLiveWorkout(w as Dictionary);
+                    System.println("Comms: adopted live workout from phone");
+                }
+            }
+        }
     }
 
     // ----------------------------------------------------------------- workout

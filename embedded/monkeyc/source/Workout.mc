@@ -1159,6 +1159,9 @@ class WorkoutController {
         }
         _restTimer.stop();
         _restTimer.start(method(:onRestTick), 1000, true);
+        if (_comms != null) {
+            _comms.fetchCurrentWorkout();
+        }
     }
 
     function onRestTick() as Void {
@@ -1409,6 +1412,98 @@ class WorkoutController {
         _setIndex = 0;
         _resetEditable();
         return true;
+    }
+
+    // Reconcile or adopt an active workout synced from the phone.
+    function adoptLiveWorkout(live as Dictionary or Null) as Void {
+        if (live == null) { return; }
+        var dName = live["dayName"];
+        if (!(dName instanceof String)) { return; }
+        var dayStr = dName as String;
+
+        // If not started yet: check if the live workout matches one of our days
+        if (!_started) {
+            var targetDay = -1;
+            for (var d = 0; d < dayCount(); d++) {
+                if (dayName(d).equals(dayStr)) {
+                    targetDay = d;
+                    break;
+                }
+            }
+            if (targetDay >= 0) {
+                selectDay(targetDay);
+                startWorkout();
+                var st = live["startTime"];
+                if (st != null and (st instanceof Number)) {
+                    _startedAt = (st as Number) / 1000;
+                }
+            }
+        }
+
+        // If workout is active (either just adopted or already started):
+        // Reconcile sets from phone
+        var exs = live["entries"];
+        if (!(exs instanceof Array)) { return; }
+        var curExs = currentExercises();
+
+        for (var i = 0; i < (exs as Array).size(); i++) {
+            var entry = (exs as Array)[i];
+            if (!(entry instanceof Dictionary)) { continue; }
+            var eDict = entry as Dictionary;
+            var eName = eDict["name"];
+            if (!(eName instanceof String)) { continue; }
+            var entryName = eName as String;
+
+            // Find corresponding exercise index in watch plan
+            var matchedIdx = -1;
+            for (var ei = 0; ei < curExs.size(); ei++) {
+                var cName = (curExs[ei] as Dictionary)[:name] as String;
+                if (cName.equals(entryName) or cName.find(entryName) != null or entryName.find(cName) != null) {
+                    matchedIdx = ei;
+                    break;
+                }
+            }
+            if (matchedIdx < 0 or matchedIdx >= _weights.size()) { continue; }
+
+            var liveSets = eDict["sets"];
+            if (!(liveSets instanceof Array)) { continue; }
+            for (var si = 0; si < (liveSets as Array).size(); si++) {
+                if (si >= (_weights[matchedIdx] as Array).size()) { continue; }
+                var sDict = (liveSets as Array)[si];
+                if (!(sDict instanceof Dictionary)) { continue; }
+                var sd = sDict as Dictionary;
+                var w = sd["weight"];
+                var r = sd["reps"];
+                var done = sd["done"];
+
+                if (w instanceof Number) {
+                    // Update weight if not logged on watch yet
+                    if (!isLogged(matchedIdx, si)) {
+                        _weights[matchedIdx][si] = w as Number;
+                    }
+                }
+                if (done instanceof Boolean and (done as Boolean)) {
+                    if (!isLogged(matchedIdx, si)) {
+                        _logged[matchedIdx][si] = true;
+                        if (w instanceof Number) { _weights[matchedIdx][si] = w as Number; }
+                        if (r instanceof Number) { _reps[matchedIdx][si] = r as Number; }
+                    }
+                }
+            }
+        }
+        recountLogged();
+
+        // If current set was completed on the phone, advance to the first uncompleted set
+        while (!isFinished() and isCurrentLogged()) {
+            if (_setIndex + 1 < currentExerciseSetCount()) {
+                _setIndex++;
+            } else {
+                _exIndex++;
+                _setIndex = 0;
+            }
+        }
+        save();
+        WatchUi.requestUpdate();
     }
 
     // The body for POST /api/v1/watch/workout: only sets the user actually

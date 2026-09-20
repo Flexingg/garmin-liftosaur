@@ -69,6 +69,101 @@ def mcp_call(name: str, arguments: dict, key: str | None = None,
     return payload["result"]["content"][0]["text"]
 
 
+# -------------------------------------------------------- REST API (live workout)
+
+LIFTOSAUR_REST_URL = "https://www.liftosaur.com/api/v1"
+
+
+def rest_call(method: str, path: str, data: dict | None = None,
+              key: str | None = None, client: str = "garmin-watch",
+              device_id: str = "garmin-venu2s", timeout: int = 45) -> dict:
+    """Call Liftosaur REST API v1 endpoint and return parsed JSON."""
+    url = f"{LIFTOSAUR_REST_URL}{path}"
+    headers = {
+        "Authorization": f"Bearer {key or api_key()}",
+        "Content-Type": "application/json",
+        "X-Liftosaur-Device-Id": device_id,
+        "X-Liftosaur-Client": client,
+    }
+    body = json.dumps(data).encode("utf-8") if data is not None else None
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="replace")
+        try:
+            err_json = json.loads(err_body)
+            msg = err_json.get("error", {}).get("message") or err_body
+        except ValueError:
+            msg = err_body
+        raise LiftosaurError(f"{method} {path} failed ({exc.code}): {msg}") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise LiftosaurError(f"{method} {path} network failed: {exc}") from exc
+
+
+def workout_get_current(key: str | None = None) -> dict | None:
+    """-> workout payload from Liftosaur or None if no active workout."""
+    res = rest_call("GET", "/workout/current", key=key)
+    return res.get("data", {}).get("workout")
+
+
+def workout_start(program_id: str | None = None, week: int | None = None,
+                  day_in_week: int | None = None, start_time: int | None = None,
+                  key: str | None = None) -> dict:
+    """Start an active workout on Liftosaur. Returns workout payload."""
+    payload: dict = {}
+    if program_id:
+        payload["programId"] = program_id
+    if week is not None:
+        payload["week"] = week
+    if day_in_week is not None:
+        payload["dayInWeek"] = day_in_week
+    if start_time is not None:
+        payload["startTime"] = start_time
+    res = rest_call("POST", "/workout/start", data=payload, key=key)
+    return res.get("data", {}).get("workout")
+
+
+def workout_log_set(entry_id: str, set_id: str, reps: int, weight: str | None = None,
+                    rpe: float | None = None, append: bool = False,
+                    key: str | None = None) -> dict:
+    """Log a completed set on the active workout in Liftosaur."""
+    completed: dict = {"reps": reps}
+    if weight:
+        completed["weight"] = weight
+    if rpe is not None:
+        completed["rpe"] = rpe
+    payload = {
+        "entryId": entry_id,
+        "setId": set_id,
+        "completed": completed
+    }
+    if append:
+        payload["append"] = True
+    res = rest_call("POST", "/workout/set", data=payload, key=key)
+    return res.get("data", {}).get("workout")
+
+
+def workout_finish(start_time: int, end_time: int | None = None,
+                   notes: str | None = None, key: str | None = None) -> dict:
+    """Finish active workout on Liftosaur. Advances day, updates 1RMs, moves to history."""
+    payload: dict = {"startTime": start_time}
+    if end_time is not None:
+        payload["endTime"] = end_time
+    if notes is not None:
+        payload["notes"] = notes
+    res = rest_call("POST", "/workout/finish", data=payload, key=key)
+    return res.get("data", {}).get("workout")
+
+
+def workout_discard(start_time: int, key: str | None = None) -> dict:
+    """Discard active workout on Liftosaur without saving to history."""
+    payload = {"startTime": start_time}
+    res = rest_call("DELETE", "/workout/current", data=payload, key=key)
+    return res.get("data", {})
+
+
 # --------------------------------------------------------------------- parsing
 
 def parse_weight(lb: str) -> float:

@@ -52,6 +52,7 @@ class LiftosaurApp extends Application.AppBase {
             System.println("LiftWorkout: restored day " + (_controller.selectedDay() + 1) +
                            " at exercise " + (_controller.currentExerciseIndex() + 1));
         }
+        _comms.fetchCurrentWorkout();
         WatchUi.requestUpdate();
     }
 
