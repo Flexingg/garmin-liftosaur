@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
+import string
 import time
 import urllib.error
 import urllib.request
@@ -32,6 +34,15 @@ CACHE_TTL_S = 600
 
 class LiftosaurError(RuntimeError):
     pass
+
+
+class ProgramNotFound(LiftosaurError):
+    """Liftosaur answered a program lookup with content, not a program.
+
+    Kept distinct from the transport failures so the watch API can answer the
+    watch with 404 (its program id is wrong) instead of 503 (Liftosaur is
+    unreachable) - two different problems for the user to act on.
+    """
 
 
 def api_key() -> str:
@@ -142,6 +153,37 @@ def workout_log_set(entry_id: str, set_id: str, reps: int, weight: str | None = 
     if append:
         payload["append"] = True
     res = rest_call("POST", "/workout/set", data=payload, key=key)
+    return res.get("data", {}).get("workout")
+
+
+def new_set_id() -> str:
+    """A set id the Liftosaur API will accept for an APPENDED set.
+
+    lambda/utils/apiv1Workout.ts:145-148 validates a new setId with
+    /^[a-z]{6}$/ - "a new setId must be 6 lowercase letters, like the app
+    generates" - and rejects anything else with 400 invalid_input. The old
+    secrets.token_hex(3) here could contain digits ('a1b2c3'), so an appended
+    set was rejected outright and the whole live sync silently gave up.
+    """
+    return "".join(random.choice(string.ascii_lowercase) for _ in range(6))
+
+
+def workout_log_sets(writes: list[dict], key: str | None = None) -> dict:
+    """Log MANY completed sets in ONE request (POST /api/v1/workout/sets).
+
+    One request per set (the /workout/set endpoint in a loop) made a live-sync
+    POST take ~1s per already-logged set - a 20-set workout meant 20 sequential
+    HTTPS round trips to liftosaur.com, comfortably past the ~10-20s timeout
+    Garmin Connect Mobile applies to a watch's makeWebRequest (which surfaces to
+    the user as CIQ's undocumented -300 "network request timed out"). The batch
+    endpoint does the same work in one round trip.
+
+    `writes` are VSetWrite objects: {"setId": ..., "entryId": ..., "append": bool,
+    "completed": {"reps": int, "weight": "135lb"}}.
+    """
+    if not writes:
+        return {}
+    res = rest_call("POST", "/workout/sets", data={"sets": writes}, key=key)
     return res.get("data", {}).get("workout")
 
 
@@ -367,7 +409,22 @@ def list_programs() -> list[dict]:
 
 
 def build_from_liftosaur(program_id: str = "current") -> dict:
-    prog = json.loads(mcp_call("get_program", {"id": program_id}))
+    # `program_id` arrives from a URL query parameter, so it can carry whatever
+    # the client typed - including a trailing slash (a real occurrence: the
+    # watch's base URL was configured with one once, and a 500 came back from
+    # `GET /watch/plan?program=gjedbyiv/` because get_program answered with the
+    # plain text "Program 'gjedbyiv/' not found", which json.loads() then choked
+    # on). Strip it here as well as at the endpoint, so no code path can 500 on it.
+    program_id = (program_id or "").strip().strip("/") or "current"
+    raw = mcp_call("get_program", {"id": program_id})
+    try:
+        prog = json.loads(raw)
+    except (TypeError, ValueError):
+        # Liftosaur reports "not found" as ordinary content with a 200, not as
+        # an error (the same shape the history write-back guards against).
+        raise ProgramNotFound(f"program '{program_id}' not found: {str(raw)[:200]}") from None
+    if not isinstance(prog, dict) or not prog.get("text"):
+        raise ProgramNotFound(f"program '{program_id}' not usable: {str(raw)[:200]}")
     plan, warnings = build_by_week(prog["text"], _rm1_map())
     sections = sorted({d["section"] for d in plan if d.get("section")})
     return {

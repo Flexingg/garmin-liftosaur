@@ -79,12 +79,17 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import logging
 import urllib.parse
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import plan as plan_mod
+
+# Errors must be readable in `journalctl --user -u garmin-liftosaur-backend`:
+# a live-sync failure the user can see on the watch has to be explainable here.
+logger = logging.getLogger("garmin_liftosaur.watch_api")
 
 router = APIRouter()
 
@@ -233,6 +238,21 @@ def watch_programs() -> dict:
     return {"programs": progs}
 
 
+@router.get("/watch/health")
+def watch_health() -> dict:
+    """Liveness probe for the watch's endpoint test.
+
+    Deliberately does NOT touch Liftosaur: the watch uses it to answer "is the
+    backend URL I am configured with reachable at all?", which is the question
+    that matters when a rotated cloudflared hostname leaves the watch unable to
+    sync (it surfaces there as CIQ/GCM's undocumented -300 "network request
+    timed out"). A backend that answers this but cannot reach Liftosaur still
+    returns 200 here on purpose - the two failures need different fixes.
+    """
+    from app.main import API_VERSION  # lazy: app.main imports this module
+    return {"status": "ok", "service": "garmin-liftosaur", "version": API_VERSION}
+
+
 @router.get("/watch/plan")
 def watch_plan(section: str | None = None, program: str = "current") -> dict:
     """The compiled plan. 503 when Liftosaur is unreachable, so the watch knows
@@ -242,8 +262,17 @@ def watch_plan(section: str | None = None, program: str = "current") -> dict:
     section because the response travels to the phone and then over BLE to the
     watch, so halving ~15KB is worth it.
     """
+    # Query parameters arrive verbatim from the watch. A configured base URL
+    # with a trailing slash used to produce "?program=gjedbyiv/" and a 500
+    # (see plan.build_from_liftosaur); strip both so a client typo can never
+    # turn into a server error.
+    program = (program or "").strip().strip("/") or "current"
+    if section:
+        section = section.strip()
     try:
         plan = plan_mod.get_plan(program)
+    except plan_mod.ProgramNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except plan_mod.LiftosaurError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if section:
@@ -495,10 +524,27 @@ def _create_live_record(text: str) -> object:
     return created["id"]
 
 
-def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> bool:
-    """Sync sets to Liftosaur active workout (/api/v1/workout/*).
-    Updates storage.progress[0] directly and triggers silent push to the phone.
-    Returns True if synced, False on failure.
+def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> tuple[bool, str]:
+    """Push the workout-so-far into Liftosaur's ACTIVE workout (storage.progress).
+
+    This is the live path, not the history path: `POST /api/v1/workout/start`
+    writes `user.storage.progress[0]` (lambda/utils/apiv1Workout.ts:812-815) -
+    the exact slot the phone app's live-workout view reads
+    (`state.storage.progress?.[0]`) - and every write goes through
+    `UserDao.applyStorageUpdate` (lambda/dao/userDao.ts:704-717), which ends with
+    `PushSync_notify(...)`, i.e. a silent push telling the user's OTHER devices
+    to re-pull storage. So sets logged here become visible to the phone without
+    the phone polling anything, and a phone-started workout is adopted rather
+    than duplicated (workout_get_current returns it; liftosaur itself answers
+    409 workout_already_active for a *different* one).
+
+    Returns (ok, error_text). The previous version returned a bare False and
+    swallowed every exception, which is how a live sync could fail on every
+    single set for weeks with nothing in the log and nothing on the watch.
+
+    One batch request, not one per set: N sequential round trips to
+    liftosaur.com took long enough to trip Garmin Connect Mobile's request
+    timeout, which the watch reports to the user as "-300".
     """
     try:
         cur = plan_mod.workout_get_current()
@@ -507,15 +553,16 @@ def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> bool:
                 week=w.week, day_in_week=w.day_in_week, start_time=stamp * 1000
             )
         if not cur or "entries" not in cur:
-            return False
+            return False, "Liftosaur returned no active workout to write into"
 
         if not w.sets:
-            return True
+            return True, ""
 
         ex_groups: dict[str, list[LoggedSet]] = {}
         for s in w.sets:
             ex_groups.setdefault(s.exercise, []).append(s)
 
+        writes: list[dict] = []
         for ex_name, lsets in ex_groups.items():
             entry = next(
                 (e for e in cur["entries"]
@@ -523,6 +570,11 @@ def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> bool:
                 None
             )
             if not entry or "sets" not in entry:
+                # Not in this day's plan (an exercise the user added on the
+                # watch): skipping is correct, but it is worth a log line -
+                # silently dropping the user's sets is what the old version did.
+                logger.warning("live sync: %r is not in the active workout; skipped",
+                               ex_name)
                 continue
 
             for idx, ls in enumerate(lsets):
@@ -531,36 +583,97 @@ def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> bool:
                     target_set = entry["sets"][idx]
                     comp = target_set.get("completed")
                     if comp and comp.get("reps") == ls.reps and comp.get("weight") == w_str:
-                        continue
-                    plan_mod.workout_log_set(entry["entryId"], target_set["setId"], ls.reps, w_str)
+                        continue  # already applied - keep the write idempotent
+                    writes.append({
+                        "entryId": entry["entryId"],
+                        "setId": target_set["setId"],
+                        "completed": {"reps": ls.reps, "weight": w_str},
+                    })
                 else:
-                    import secrets
-                    plan_mod.workout_log_set(
-                        entry["entryId"], secrets.token_hex(3), ls.reps, w_str, append=True
-                    )
-        return True
-    except Exception:
-        return False
+                    writes.append({
+                        "entryId": entry["entryId"],
+                        "setId": plan_mod.new_set_id(),
+                        "append": True,
+                        "completed": {"reps": ls.reps, "weight": w_str},
+                    })
+
+        if not writes:
+            return True, ""
+        plan_mod.workout_log_sets(writes)
+        return True, ""
+    except Exception as exc:  # noqa: BLE001 - reported, never hidden
+        logger.warning("live sync to Liftosaur failed: %s", exc)
+        return False, str(exc)[:200]
 
 
-def _finish_live_on_liftosaur(stamp: int) -> bool:
+def _active_start_time(cur: dict | None) -> int | None:
+    """The startTime of the workout Liftosaur currently holds, in ms."""
+    if not isinstance(cur, dict):
+        return None
+    st = cur.get("startTime")
+    if isinstance(st, (int, float)):
+        return int(st)
+    return None
+
+
+def _finish_live_on_liftosaur(stamp: int) -> tuple[bool, str]:
+    """Finish the workout that is in progress, if it is OURS.
+
+    Liftosaur identifies a workout by its startTime (that value becomes the
+    history record's id on finish), so a finish has to use the startTime
+    Liftosaur is actually holding. Posting our own payload stamp instead
+    answered 404 "No workout in progress with startTime X" whenever the phone
+    had started the session - and the failure was swallowed, so the workout
+    simply stayed open in his app with nothing logged here.
+
+    A workout started by ANOTHER device is deliberately left alone: finishing
+    it would end a session the phone still owns, and (because ids differ) would
+    land a second history record for the same workout.
+    """
     try:
         cur = plan_mod.workout_get_current()
-        if cur:
-            now_ms = int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
-            plan_mod.workout_finish(start_time=stamp * 1000, end_time=now_ms)
-            return True
-    except Exception:
-        pass
-    return False
+        if not cur:
+            return False, "no workout in progress to finish"
+        theirs = _active_start_time(cur)
+        ours = stamp * 1000
+        if theirs is not None and theirs != ours:
+            msg = (f"a different workout is in progress (started "
+                   f"{theirs}, this session is {ours}); left it running")
+            logger.warning("live finish: %s", msg)
+            return False, msg
+        now_ms = int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
+        plan_mod.workout_finish(start_time=ours, end_time=now_ms)
+        return True, ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("finishing the Liftosaur workout failed: %s", exc)
+        return False, str(exc)[:200]
 
 
-def _discard_live_on_liftosaur(stamp: int) -> bool:
+def _discard_live_on_liftosaur(stamp: int) -> tuple[bool, str]:
+    """Discard the in-progress workout, if it is ours.
+
+    Same identity rule as the finish: the record id is a startTime in ms, but
+    the workout Liftosaur holds may have been started by another device (or by
+    a crashed earlier session), and asking it to discard OUR guess answered 404
+    - swallowed, so the workout stayed open in his app after a Discard that
+    looked successful on the watch.
+    """
     try:
-        plan_mod.workout_discard(start_time=stamp * 1000)
-        return True
-    except Exception:
-        return False
+        cur = plan_mod.workout_get_current()
+        if not cur:
+            return False, "no workout in progress"
+        theirs = _active_start_time(cur)
+        ours = stamp * 1000
+        if theirs is not None and theirs != ours:
+            msg = (f"a different workout is in progress (started {theirs}, "
+                   f"this session is {ours}); not discarding it")
+            logger.warning("live discard: %s", msg)
+            return False, msg
+        plan_mod.workout_discard(start_time=ours)
+        return True, ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("discarding the Liftosaur workout failed: %s", exc)
+        return False, str(exc)[:200]
 
 
 @router.post("/watch/workout/live")
@@ -587,10 +700,11 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
         if finished:
             return {"recorded": False, "sets": 0}
         stamp = _live_stamp(record, w.started_at)
-        rest_synced = False
+        rest_synced, rest_error = False, ""
         if not dry_run:
-            rest_synced = _sync_live_to_liftosaur(w, stamp)
-        return {"id": record or "", "started": True, "sets": 0, "rest_synced": rest_synced}
+            rest_synced, rest_error = _sync_live_to_liftosaur(w, stamp)
+        return {"id": record or "", "started": True, "sets": 0,
+                "rest_synced": rest_synced, "rest_error": rest_error}
 
     n = len(w.sets)
     # Never shrink a live record: a late/out-of-order POST carrying fewer sets
@@ -605,19 +719,24 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
         return {"recorded": False, "dry_run": True, "id": record or "dry",
                 "sets": n, "liftohistory": text}
 
-    # Attempt real-time sync with Liftosaur REST API
-    rest_synced = False
+    # Attempt real-time sync with Liftosaur REST API. The result is REPORTED to
+    # the watch (rest_synced/rest_error) rather than swallowed: this is the
+    # feature the owner asked for ("live to Liftosaur while I'm on the phone
+    # too"), so a failure has to be visible somewhere - the watch's sync line
+    # and this service's log - instead of looking like nothing happened.
+    rest_synced, rest_error = False, ""
     if not finished:
-        rest_synced = _sync_live_to_liftosaur(w, stamp)
+        rest_synced, rest_error = _sync_live_to_liftosaur(w, stamp)
     else:
-        rest_synced = _finish_live_on_liftosaur(stamp)
+        rest_synced, rest_error = _finish_live_on_liftosaur(stamp)
 
     if not record:
         new_id = _create_live_record(text)
         rid = str(new_id)
         _LIVE_STAMPS[rid] = stamp
         _LIVE_SET_COUNTS[rid] = n
-        return {"id": new_id, "created": True, "sets": n, "rest_synced": rest_synced}
+        return {"id": new_id, "created": True, "sets": n,
+                "rest_synced": rest_synced, "rest_error": rest_error}
 
     try:
         raw = plan_mod.mcp_call("update_history_record", {"id": record, "text": text})
@@ -632,11 +751,13 @@ async def watch_workout_live(payload: str | None = None, record: str = "",
         rid = str(new_id)
         _LIVE_STAMPS[rid] = stamp
         _LIVE_SET_COUNTS[rid] = n
-        return {"id": new_id, "created": True, "sets": n, "rest_synced": rest_synced}
+        return {"id": new_id, "created": True, "sets": n,
+                "rest_synced": rest_synced, "rest_error": rest_error}
 
     _LIVE_STAMPS.setdefault(record, stamp)
     _LIVE_SET_COUNTS[record] = n
-    return {"id": record, "updated": True, "sets": n, "rest_synced": rest_synced}
+    return {"id": record, "updated": True, "sets": n,
+            "rest_synced": rest_synced, "rest_error": rest_error}
 
 
 @router.post("/watch/workout/discard")
@@ -649,7 +770,10 @@ async def watch_workout_discard(record: str = "", dry_run: int = 0) -> dict:
         # Nothing was ever synced for this workout - a normal case, not an error.
         return {"deleted": False, "reason": "no record"}
     
-    # Also discard in-progress workout on Liftosaur REST API
+    # Also discard the in-progress workout on the Liftosaur REST API, and report
+    # what happened to it: a discard that left the workout open in his app while
+    # answering "deleted" is exactly the kind of silent lie this project banned.
+    rest_discarded, rest_error = False, ""
     stamp = _LIVE_STAMPS.get(record)
     if not stamp:
         try:
@@ -657,7 +781,7 @@ async def watch_workout_discard(record: str = "", dry_run: int = 0) -> dict:
         except ValueError:
             stamp = None
     if stamp:
-        _discard_live_on_liftosaur(stamp)
+        rest_discarded, rest_error = _discard_live_on_liftosaur(stamp)
 
     try:
         raw = plan_mod.mcp_call("delete_history_record", {"id": record})
@@ -668,5 +792,7 @@ async def watch_workout_discard(record: str = "", dry_run: int = 0) -> dict:
     # A "not found" reply already satisfies the user's intent - nothing left
     # behind - so it is reported as a success, not a 502.
     if "not found" in raw.lower():
-        return {"deleted": True, "id": record, "reason": "already gone"}
-    return {"deleted": True, "id": record}
+        return {"deleted": True, "id": record, "reason": "already gone",
+                "rest_discarded": rest_discarded, "rest_error": rest_error}
+    return {"deleted": True, "id": record,
+            "rest_discarded": rest_discarded, "rest_error": rest_error}

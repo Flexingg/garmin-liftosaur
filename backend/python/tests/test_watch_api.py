@@ -591,6 +591,7 @@ def test_live_dry_run_writes_nothing(monkeypatch):
 
 def test_discard_deletes_the_record(monkeypatch):
     seen = {}
+    discarded = []
 
     def fake_mcp(name, args, **kw):
         seen["name"] = name
@@ -598,11 +599,41 @@ def test_discard_deletes_the_record(monkeypatch):
         return '{"ok":true}'
 
     monkeypatch.setattr(plan_mod, "mcp_call", fake_mcp)
+    # record "111" carries the session's startTime (ms) as its id, which is how
+    # the discard finds the workout Liftosaur is holding.
+    monkeypatch.setattr(plan_mod, "workout_get_current",
+                        lambda: {"startTime": 111000})
+    monkeypatch.setattr(plan_mod, "workout_discard",
+                        lambda **kw: discarded.append(kw))
     r = client.post("/api/v1/watch/workout/discard", params={"record": "111"})
     assert r.status_code == 200, r.text
-    assert r.json() == {"deleted": True, "id": "111"}
+    assert r.json() == {"deleted": True, "id": "111",
+                        "rest_discarded": True, "rest_error": ""}
     assert seen["name"] == "delete_history_record"
     assert seen["args"] == {"id": "111"}
+    assert discarded == [{"start_time": 111000}]
+
+
+def test_discard_leaves_another_devices_workout_alone(monkeypatch):
+    """A workout the PHONE started must not be thrown away by a watch Discard.
+
+    The old code asked Liftosaur to discard its own guessed startTime, which
+    answered 404 for someone else's session - the failure was swallowed, so the
+    watch said "discarded" while the workout stayed open in his app.
+    """
+    discarded = []
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"ok":true}')
+    monkeypatch.setattr(plan_mod, "workout_get_current",
+                        lambda: {"startTime": 999000})   # not our 111000
+    monkeypatch.setattr(plan_mod, "workout_discard",
+                        lambda **kw: discarded.append(kw))
+    r = client.post("/api/v1/watch/workout/discard", params={"record": "111"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["deleted"] is True        # our history record is still gone
+    assert body["rest_discarded"] is False
+    assert "different workout is in progress" in body["rest_error"]
+    assert discarded == []
 
 
 def test_discard_with_no_record_is_a_no_op(monkeypatch):
@@ -617,9 +648,11 @@ def test_discard_with_no_record_is_a_no_op(monkeypatch):
 
 def test_discard_of_a_missing_record_is_not_an_error(monkeypatch):
     monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: "Record not found.")
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: None)
     r = client.post("/api/v1/watch/workout/discard", params={"record": "gone"})
     assert r.status_code == 200, r.text
-    assert r.json() == {"deleted": True, "id": "gone", "reason": "already gone"}
+    assert r.json() == {"deleted": True, "id": "gone", "reason": "already gone",
+                        "rest_discarded": False, "rest_error": ""}
 
 
 def test_discard_dry_run_writes_nothing(monkeypatch):
@@ -757,6 +790,15 @@ def test_watch_workout_current_active(monkeypatch):
 
 
 def test_live_post_triggers_rest_api_sync(monkeypatch):
+    """A live post pushes the new set into Liftosaur's ACTIVE workout.
+
+    Updated 2026-09-24 for the batch endpoint: the live path now sends ONE
+    POST /api/v1/workout/sets carrying every not-yet-applied set, instead of one
+    /workout/set call per set. Per-set calls made a live post take ~1s per
+    logged set, which is past the timeout Garmin Connect Mobile puts on a
+    watch's request (the watch shows that as "-300") - the assertion below that
+    exactly one call happens is the point of the test, not incidental.
+    """
     calls = []
     mock_active = {
         "entries": [
@@ -770,14 +812,86 @@ def test_live_post_triggers_rest_api_sync(monkeypatch):
         ]
     }
     monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_active)
-    monkeypatch.setattr(plan_mod, "workout_log_set", lambda eid, sid, reps, wt, **kw: calls.append((eid, sid, reps, wt)))
+    monkeypatch.setattr(plan_mod, "workout_log_sets", lambda writes, **kw: calls.append(writes))
     monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
 
     r = client.post("/api/v1/watch/workout/live",
                     params={"payload": _live_payload("Squat|220|5|0"), "record": ""})
     assert r.status_code == 200
     assert r.json()["rest_synced"] is True
-    assert calls == [("squat_barbell", "s1", 5, "220lb")]
+    assert len(calls) == 1, "one batch request, not one request per set"
+    assert calls[0] == [{
+        "entryId": "squat_barbell",
+        "setId": "s1",
+        "completed": {"reps": 5, "weight": "220lb"},
+    }]
+
+
+def test_live_post_does_not_resend_an_already_completed_set(monkeypatch):
+    """Idempotence: the payload always carries the WHOLE workout-so-far, so a
+    set Liftosaur already has must not be written again on every later set."""
+    calls = []
+    mock_active = {
+        "entries": [
+            {
+                "entryId": "squat_barbell",
+                "name": "Squat",
+                "sets": [
+                    {"setId": "s1", "reps": 5, "weight": "220lb",
+                     "completed": {"reps": 5, "weight": "220lb"}},
+                    {"setId": "s2", "reps": 5, "weight": "250lb", "completed": None},
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_active)
+    monkeypatch.setattr(plan_mod, "workout_log_sets", lambda writes, **kw: calls.append(writes))
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0;Squat|250|5|0"),
+                            "record": ""})
+    assert r.status_code == 200
+    assert calls == [[{
+        "entryId": "squat_barbell",
+        "setId": "s2",
+        "completed": {"reps": 5, "weight": "250lb"},
+    }]]
+
+
+def test_live_post_reports_a_rest_failure_instead_of_swallowing_it(monkeypatch):
+    """A live-sync failure is surfaced (rest_error + a log line), never hidden.
+
+    This is the HX711-style discipline the project settled on: a silent failure
+    here is how "live sync does not work" survived as an unexplained symptom.
+    """
+    def boom(writes, **kw):
+        raise plan_mod.LiftosaurError("POST /workout/sets failed (400): nope")
+
+    monkeypatch.setattr(plan_mod, "workout_get_current",
+                        lambda: {"entries": [{"entryId": "e", "name": "Squat",
+                                              "sets": [{"setId": "s1", "completed": None}]}]})
+    monkeypatch.setattr(plan_mod, "workout_log_sets", boom)
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": ""})
+    assert r.status_code == 200, "the history record still has to land"
+    body = r.json()
+    assert body["rest_synced"] is False
+    assert "400" in body["rest_error"]
+
+
+def test_appended_sets_use_a_set_id_liftosaur_accepts():
+    """A new setId must match /^[a-z]{6}$/ (apiv1Workout.ts:145-148).
+
+    secrets.token_hex(3) could contain digits, and Liftosaur rejects such an
+    append with 400 invalid_input - which the old code swallowed, so appending
+    an extra set silently killed the live sync for the rest of the session.
+    """
+    import re as _re
+    for _ in range(50):
+        assert _re.fullmatch(r"[a-z]{6}", plan_mod.new_set_id())
 
 
 def test_finished_post_triggers_rest_api_finish(monkeypatch):
@@ -788,20 +902,49 @@ def test_finished_post_triggers_rest_api_finish(monkeypatch):
     monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
 
     r = client.post("/api/v1/watch/workout/live",
-                    params={"payload": _live_payload("Squat|220|5|0"), "record": "111", "finished": 1})
+                    params={"payload": _live_payload("Squat|220|5|0", started_at=1700000000),
+                            "record": "111", "finished": 1})
     assert r.status_code == 200
     assert r.json()["rest_synced"] is True
     assert len(finished_called) == 1
+    # the finish must name the startTime Liftosaur is holding: that value becomes
+    # the history record's id, and a mismatch is answered 404 (silently, before).
+    assert finished_called[0]["start_time"] == 1700000000000
+
+
+def test_finished_post_does_not_finish_another_devices_workout(monkeypatch):
+    """The session in Liftosaur belongs to the phone -> do not finish it.
+
+    Finishing it would end a workout the phone still owns and land a second
+    history record for it (different startTime = different id).
+    """
+    finished_called = []
+    monkeypatch.setattr(plan_mod, "workout_get_current",
+                        lambda: {"startTime": 999000})
+    monkeypatch.setattr(plan_mod, "workout_finish", lambda **kw: finished_called.append(kw))
+    monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"id":"111"}')
+
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"),
+                            "record": "111", "finished": 1})
+    assert r.status_code == 200, "the watch's own record still has to land"
+    body = r.json()
+    assert body["rest_synced"] is False
+    assert "different workout is in progress" in body["rest_error"]
+    assert finished_called == []
 
 
 def test_discard_triggers_rest_api_discard(monkeypatch):
     discard_called = []
+    monkeypatch.setattr(plan_mod, "workout_get_current",
+                        lambda: {"startTime": 1700000000000})
     monkeypatch.setattr(plan_mod, "workout_discard", lambda **kw: discard_called.append(kw))
     monkeypatch.setattr(plan_mod, "mcp_call", lambda name, args, **kw: '{"deleted": true}')
 
     r = client.post("/api/v1/watch/workout/discard", params={"record": "1700000000"})
     assert r.status_code == 200
     assert len(discard_called) == 1
+    assert discard_called[0]["start_time"] == 1700000000000
 
 
 def test_live_payload_with_zero_sets_starts_active_workout(monkeypatch):
@@ -852,5 +995,71 @@ def test_workout_current_resolves_watch_day_name(monkeypatch):
     assert res["active"] is True
     assert res["workout"]["dayName"] == "Day 5 - Light Pump"
     assert res["workout"]["rawDayName"] == "Week 1 - Day 5 - Light Pump (Wed)"
+
+
+# --------------------------------------------------- endpoint diagnostics (2026-09-24)
+
+def test_watch_health_answers_without_touching_liftosaur(monkeypatch):
+    """The watch's endpoint probe must answer even when Liftosaur is down:
+    "is my configured backend URL reachable?" is a different question from
+    "can the backend reach Liftosaur?", and it is the reachable-URL one that
+    a rotated tunnel hostname breaks (the watch sees CIQ/GCM's -300)."""
+    def explode(*a, **kw):
+        raise AssertionError("health must not call Liftosaur")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", explode)
+    monkeypatch.setattr(plan_mod, "rest_call", explode)
+    r = client.get("/api/v1/watch/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "garmin-liftosaur"
+
+
+def test_plan_trailing_slash_in_program_does_not_500(monkeypatch):
+    """A base URL configured with a trailing slash made every watch URL carry
+    one, and `?program=<id>/` used to answer 500 (json.loads on Liftosaur's
+    'not found' text). It is stripped now; the value never reaches Liftosaur."""
+    seen = []
+
+    def fake_get_plan(program_id, force=False):
+        seen.append(program_id)
+        return {"program": "P", "days": [{"name": "Day 1", "section": "Week 1"}]}
+
+    monkeypatch.setattr(plan_mod, "get_plan", fake_get_plan)
+    r = client.get("/api/v1/watch/plan", params={"program": "gjedbyiv/"})
+    assert r.status_code == 200
+    assert seen == ["gjedbyiv"]
+
+
+def test_plan_unknown_program_is_a_404_not_a_503(monkeypatch):
+    """404 (your program id is wrong) and 503 (Liftosaur unreachable) are
+    different problems for the user, so they get different status codes."""
+    def not_found(program_id, force=False):
+        raise plan_mod.ProgramNotFound("program 'nope' not found")
+
+    monkeypatch.setattr(plan_mod, "get_plan", not_found)
+    r = client.get("/api/v1/watch/plan", params={"program": "nope"})
+    assert r.status_code == 404
+
+    def unreachable(program_id, force=False):
+        raise plan_mod.LiftosaurError("network failed")
+
+    monkeypatch.setattr(plan_mod, "get_plan", unreachable)
+    r = client.get("/api/v1/watch/plan", params={"program": "nope"})
+    assert r.status_code == 503
+
+
+def test_build_from_liftosaur_rejects_a_non_json_reply(monkeypatch):
+    """Liftosaur answers a bad program lookup with plain text at HTTP 200;
+    that must surface as ProgramNotFound, not a JSONDecodeError 500."""
+    monkeypatch.setattr(plan_mod, "mcp_call",
+                        lambda name, args, **kw: "Program 'x/' not found")
+    try:
+        plan_mod.build_from_liftosaur("")
+    except plan_mod.ProgramNotFound as exc:
+        assert "not found" in str(exc)
+    else:
+        raise AssertionError("expected ProgramNotFound")
 
 

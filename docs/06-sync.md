@@ -31,25 +31,53 @@ garmin-liftosaur-backend.service   0.0.0.0:8008   the API
 liftosaur-tunnel.service    cloudflared    https://<random>.trycloudflare.com
 ```
 
-The hostname is written to `~/.liftosaur-tunnel-url`.
+The hostname is written to `~/.liftosaur-tunnel-url` **and published** (2026-09-24)
+to `endpoint.json` at the repo root; `liftosaur-tunnel.sh` commits and pushes it
+whenever the hostname changes.
 
-### ⚠ The one sharp edge
+### Endpoint robustness (2026-09-24): the watch no longer needs a rebuild
 
-A quick-tunnel hostname is **regenerated every time the tunnel restarts**, and
-the watch bakes the URL in at build time (`LIFT_BACKEND` in `source/Comms.mc`).
-After a tunnel restart the watch must be rebuilt:
+A quick-tunnel hostname is regenerated every time the tunnel restarts (it did on
+2026-09-20, `transcripts-forward-acdbentity-ascii` → `them-pda-classifieds-experts`).
+The app used to bake one URL in and concatenate it verbatim, so a rotation — or a
+`/` or space typed into the settings value — broke every sync until a new `.prg`
+was sideloaded. `source/Endpoint.mc` now owns the rules (pure functions, no I/O,
+mirrored in `tools/endpoint_mirror.py` and tested by
+`backend/python/tests/test_endpoint.py`):
 
-```bash
-cd embedded/monkeyc
-python3 tools/plan_from_liftosaur.py          # re-bake the plan too
-sed -i "s|const LIFT_BACKEND = \"[^\"]*\"|const LIFT_BACKEND = \"$(cat ~/.liftosaur-tunnel-url)\"|" source/Comms.mc
-HOME=/home/hermes ./tools/linux-build.sh venu2s
-```
+- **`normalizeBaseUrl`** trims whitespace/slashes and requires `https://` (plain
+  `http` is only accepted for loopback hosts, because the platform answers
+  `-1001 SECURE_CONNECTION_REQUIRED` anywhere else).
+- **`joinUrl`** puts exactly one `/` between base and path. This is the fix for
+  the trailing-slash bug: `base + "/api/v1/..."` with a base ending in `/` used to
+  produce `//api/v1/...` (404) or a path ending in `/` — and **FastAPI answers a
+  trailing-slash path with a 307**, which `makeWebRequest` never follows. The same
+  trailing-slash URL has been observed answering **307 from one Cloudflare edge and
+  200 from another minutes apart**, which is worth knowing before blaming the
+  backend for a "3xx": through the tunnel the status is edge-dependent, so the
+  only safe answer is to never emit such a URL.
+- **Candidates and failover** (`candidates`, `shouldFollow`, `isRetryable`,
+  `nextIndex`): the watch tries, in order, the base URL that last worked
+  (Storage), the `backendUrl` runtime property, then the compiled `LIFT_BACKEND`.
+  Anything that is not a 2xx moves on to the next one — including Garmin Connect
+  Mobile's **`-300`**, which is *not* an HTTP status but CIQ's undocumented
+  "network request timed out", i.e. what a dead tunnel hostname looks like from
+  the wrist. A 3xx is additionally retried once as-is before failing over.
+- **Discovery**: only after every candidate has failed, the watch fetches
+  `LiftEndpoint.DISCOVERY_URLS` (raw.githubusercontent → jsDelivr, both serving
+  `endpoint.json`) and re-sends the failed request against the hostname found
+  there. That makes a tunnel rotation self-healing instead of a sideload.
 
-**The fix for this is a named tunnel on a domain you own** (`cloudflared tunnel
-login`, then a tunnel routed to e.g. `lift.randalls.cc`), which keeps one stable
-hostname forever and removes the rebuild step. That needs interactive Cloudflare
-auth, so it is left as a deliberate follow-up rather than done silently.
+Diagnostics on the wrist: the day picker's hold menu and the workout options menu
+now have **"Sync status"** — the effective base URL, the last failure in words
+(`-300 network timeout (phone)`, `307 redirect`, …), the pending-retry state, and
+a **"test endpoint"** probe (`GET /api/v1/watch/health`) that answers even when
+Liftosaur itself is down.
+
+**A named tunnel on a domain you own** (`cloudflared tunnel login`, routed to e.g.
+`lift.randalls.cc`) is still the permanent fix — one stable hostname, no discovery
+needed. It requires interactive Cloudflare auth, so it remains a deliberate
+follow-up rather than something done silently.
 
 ## The plan endpoint
 
@@ -198,6 +226,55 @@ Both endpoints share `watch_workout`'s rejection-vs-success discipline: a
 write is only reported as successful when Liftosaur's response is a JSON
 object carrying an `id`; anything else is a `502`, never a false success.
 
+### Live sync in Liftosaur's own terms (2026-09-24)
+
+The live path is not only a history record: `/watch/workout/live` also drives
+Liftosaur's **active workout** through its REST API (`/api/v1/workout/start`,
+`/workout/sets`, `/workout/finish`, `/workout/current`), authenticated by the
+same API key. That matters because `ApiV1_startWorkout` writes
+`user.storage.progress[0]` (`lambda/utils/apiv1Workout.ts` upstream) — the exact
+slot the phone app's live-workout view reads — and every write ends in
+`UserDao.applyStorageUpdate` → `PushSync_notify`, i.e. a silent push telling the
+user's *other* devices to re-pull storage. So the watch's sets reach the phone
+without any polling, and a workout begun on the phone is adopted rather than
+duplicated (`409 workout_already_active` comes back for a *different* one).
+
+Two things in that path were wrong and are fixed:
+
+- **One request per set.** The loop logged each set with its own
+  `POST /workout/set`; by the twentieth set a single watch push meant twenty
+  sequential round trips to liftosaur.com, comfortably past the ~10-20 s timeout
+  Garmin Connect Mobile applies to a `makeWebRequest` — which the watch reports
+  as `-300`. It is now one `POST /workout/sets` batch carrying only the sets not
+  already applied.
+- **Appended set ids.** A set beyond the plan's list was appended with
+  `secrets.token_hex(3)`, which can contain digits; Liftosaur validates a new
+  `setId` against `^[a-z]{6}$` and answers `400 invalid_input`, killing the live
+  sync for the rest of the session. `plan.new_set_id()` now mints six lowercase
+  letters.
+
+Everything a live write reports is **surfaced, never swallowed**: the response
+carries `rest_synced` and `rest_error`, and a failure also logs a warning
+(`journalctl --user -u garmin-liftosaur-backend`) and sets the watch's sync note.
+
+**Identity rules for finish/discard.** A workout's identity in Liftosaur is its
+`startTime` (that value becomes the history record's id on finish), so the watch's
+finish and discard actions act only on a workout with a matching `startTime`. A
+workout started by another device is left alone and reported
+(`a different workout is in progress (started …, this session is …)`) — before
+this, the backend sent its own guess, got `404`, swallowed it, and the workout
+stayed open in the app while the watch said it had been saved/discarded.
+
+### `GET /api/v1/watch/health`
+
+Liveness only: it answers `200` without touching Liftosaur, because "is the
+configured backend URL reachable?" and "can the backend reach Liftosaur?" are
+different failures with different fixes, and it is the first one that a rotated
+tunnel hostname breaks. `GET /api/v1/watch/plan?program=<bad-id>` answers `404`
+(unknown program) and `?program=<id>/` is stripped rather than reaching Liftosaur
+as a name with a slash in it (that used to be a `500`, because Liftosaur's plain
+text "not found" reply was fed to `json.loads`).
+
 ## Verifying sync without the watch
 
 ```bash
@@ -225,9 +302,43 @@ python3 tools/plan_from_liftosaur.py --post /tmp/test_workout.json   # writes a 
 Test against the **real** program name, then delete the record with the
 Liftosaur `delete_history_record` tool (it takes the returned id).
 
+### The end-to-end proof tool
+
+```bash
+cd embedded/monkeyc
+python3 tools/e2e_watch_sync.py         # 25 assertions, over the real tunnel
+```
+
+It goes through the public tunnel URL — the same path a watch request takes — and
+proves, in order: the health probe; the URL shapes (the app's own, and the
+trailing-slash one that used to 500); a set logged live reaching Liftosaur's
+active workout **with the watch session's own `startTime`**; the second set
+updating the same workout; a discard removing both; and a finished workout
+landing as a history record which it then **reads back from the Liftosaur API**
+and deletes again. It refuses to start if a workout is already in progress (it
+must never adopt someone else's session), and it cleans up after itself — nothing
+is left in the account.
+
+It deliberately does **not** exercise the REST *finish* leg
+(`POST /workout/finish`), because that advances the program to the next day: on a
+real account a fake finish would corrupt the owner's progression. That leg is unit
+tested instead (identity match → `workout_finish(start_time=<the workout's own>)`),
+and the leg is exercised for real the first time he finishes a workout with the
+watch — watch the sync line and the Liftosaur history.
+
 Backend tests cover the format exhaustively — `backend/python/tests/test_watch_api.py`
 asserts the exact text, the grouping rules, the rejection-vs-success distinction,
 the section filter, the dry-run mode, the compact-payload round-trip for every
 day in the plan, and (as of the live-sync addition) the create/update/stale/
-discard/dry-run behaviour of the two endpoints above (`65 passed` as of this
-writing; `54` as previously documented here was the pre-live-sync baseline).
+discard/dry-run behaviour of the two endpoints above. `tests/test_endpoint.py`
+covers the endpoint rules the watch uses, against the Python mirror of
+`Endpoint.mc` (`178 passed` in total as of 2026-09-24; `54` was the pre-live-sync
+baseline).
+
+**The suite is hermetic** (`tests/conftest.py`, 2026-09-24). Before that guard it
+was not: the live-sync tests stubbed `plan.mcp_call` but the live endpoint also
+calls the Liftosaur **REST** API, so running `pytest` reached liftosaur.com for
+real and **started a phantom workout in the owner's account** — with the tests'
+own weights in it — which then sat there as "in progress" until something
+discarded it. `conftest.py` replaces `plan.rest_call` with a refusal for every
+test; a test that needs the REST leg patches `plan.workout_*` itself.

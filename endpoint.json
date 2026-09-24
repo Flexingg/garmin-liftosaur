@@ -1,0 +1,5 @@
+{
+  "backend": "https://them-pda-classifieds-experts.trycloudflare.com",
+  "updated": "2026-09-24T09:05:54Z",
+  "note": "Current public https base URL of the Garmin-Liftosaur backend, published by liftosaur-tunnel.sh whenever the cloudflared quick tunnel rotates. The watch app (see embedded/monkeyc/source/Endpoint.mc) reads this ONLY as a fallback, after every URL it already knows has failed to answer; that is what makes a rotated tunnel self-healing instead of needing a new sideload. Do not put secrets here - this repository is public."
+}

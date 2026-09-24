@@ -1834,6 +1834,42 @@ class WorkoutController {
     function setSyncNote(t as String) as Void { _syncNote = t; }
     function lapsAdded() as Number { return _lapsAdded; }
 
+    // ------------------------------------------------ endpoint (SyncStatusView)
+
+    // Thin pass-throughs to LiftComms; _comms is null in tests.
+    function endpointText() as String {
+        return (_comms != null) ? _comms.endpointText() : "";
+    }
+
+    function lastSyncText() as String {
+        return (_comms != null) ? _comms.lastErrorText() : "nothing tried yet";
+    }
+
+    function probeText() as String {
+        return (_comms != null) ? _comms.probeText() : "not tested";
+    }
+
+    function hasPendingWorkout() as Boolean {
+        return (_comms != null) ? _comms.hasPending() : false;
+    }
+
+    function testEndpoint() as Void {
+        if (_comms != null) { _comms.probeEndpoint(); }
+    }
+
+    function diagLines() as Array<String> {
+        var n = (_comms != null) ? _comms.candidateCount() : 0;
+        return [
+            "ENDPOINT (" + n + " candidates)",
+            endpointText(),
+            "last: " + lastSyncText(),
+            "probe: " + probeText(),
+            "pending: " + (hasPendingWorkout() ? "yes" : "no"),
+            "garmin: " + activityNote(),
+            "hold SELECT to test"
+        ] as Array<String>;
+    }
+
     // Wall-clock, not System.getTimer(): the timer counts from BOOT, so a session
     // restored after a restart used to report the device uptime as its duration
     // (a 45-minute workout was recorded as 27138s). Clamped so a bad clock can

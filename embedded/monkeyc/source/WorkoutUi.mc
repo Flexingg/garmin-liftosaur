@@ -208,8 +208,9 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
     // affirmative action on the picker (the user chose that map explicitly).
     function onMenu() as Boolean {
         var menu = new WatchUi.Menu2({ :title => "Liftosaur" });
+        menu.addItem(new WatchUi.MenuItem("Sync status", null, "status", null));
         menu.addItem(new WatchUi.MenuItem("Exit app", null, "exit", null));
-        WatchUi.pushView(menu, new PickerMenuDelegate(), WatchUi.SLIDE_UP);
+        WatchUi.pushView(menu, new PickerMenuDelegate(_c), WatchUi.SLIDE_UP);
         return true;
     }
 
@@ -229,13 +230,135 @@ class ListPickerDelegate extends WatchUi.BehaviorDelegate {
 
 class PickerMenuDelegate extends WatchUi.Menu2InputDelegate {
 
-    function initialize() {
+    private var _c;
+
+    function initialize(c as WorkoutController) {
         Menu2InputDelegate.initialize();
+        _c = c;
     }
 
     function onSelect(item as WatchUi.MenuItem) as Void {
+        var id = item.getId();
+        if (id != null and id.equals("status")) {
+            WatchUi.popView(WatchUi.SLIDE_DOWN);
+            pushSyncStatus(_c);
+            return;
+        }
         System.exit();
     }
+}
+
+// ---------------------------------------------------------------- sync status
+
+// Where the watch is sending its requests and what happened last time, so a
+// failing sync can be diagnosed on the wrist. Reachable from both hold menus.
+// Only shows what LiftComms actually recorded - no guessed values.
+const SYNC_LINES_PER_PAGE = 4;
+const SYNC_CHARS_PER_ROW = 26;
+
+class SyncStatusView extends WatchUi.View {
+
+    private var _c;
+    private var _page;
+
+    function initialize(c as WorkoutController) {
+        View.initialize();
+        _c = c;
+        _page = 0;
+    }
+
+    function pageCount() as Number {
+        var n = _c.diagLines().size();
+        return (n + SYNC_LINES_PER_PAGE - 1) / SYNC_LINES_PER_PAGE;
+    }
+
+    function page() as Number { return _page; }
+
+    function setPage(p as Number) as Void {
+        var last = pageCount() - 1;
+        if (p > last) { p = last; }
+        if (p < 0) { p = 0; }
+        _page = p;
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        var c0 = dc.getHeight() / 2;
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.clear();
+        var lines = _c.diagLines();
+        var pages = pageCount();
+        drawCentered(dc, c0 - 118, "SYNC STATUS", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
+        drawCentered(dc, c0 - 96, (_page + 1) + " of " + pages, Graphics.FONT_XTINY,
+                     LIFT_TEXT_DIM);
+        var y = c0 - 66;
+        var first = _page * SYNC_LINES_PER_PAGE;
+        for (var i = first; i < lines.size() and i < first + SYNC_LINES_PER_PAGE; i++) {
+            // A URL or an error line is longer than the round screen is wide:
+            // split it over rows rather than lose the end of it.
+            var text = lines[i] as String;
+            var color = (i == first) ? LIFT_TEXT : LIFT_TEXT_DIM;
+            while (text.length() > SYNC_CHARS_PER_ROW) {
+                drawCentered(dc, y, text.substring(0, SYNC_CHARS_PER_ROW) as String,
+                             Graphics.FONT_XTINY, color);
+                text = text.substring(SYNC_CHARS_PER_ROW, text.length()) as String;
+                y += 22;
+            }
+            drawCentered(dc, y, text, Graphics.FONT_XTINY, color);
+            y += 30;
+        }
+    }
+}
+
+class SyncStatusDelegate extends WatchUi.BehaviorDelegate {
+
+    private var _c;
+    private var _view;
+
+    function initialize(c as WorkoutController) {
+        BehaviorDelegate.initialize();
+        _c = c;
+        _view = null;
+    }
+
+    // The view this delegate pages; set by the caller that pushed both.
+    function setView(v as SyncStatusView) as Void { _view = v; }
+
+    function onNextPage() as Boolean {
+        if (_view != null) { _view.setPage(_view.page() + 1); }
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onPreviousPage() as Boolean {
+        if (_view != null) { _view.setPage(_view.page() - 1); }
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onSelect() as Boolean {
+        _c.testEndpoint();
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onMenu() as Boolean {
+        _c.testEndpoint();
+        WatchUi.requestUpdate();
+        return true;
+    }
+
+    function onBack() as Boolean {
+        WatchUi.popView(WatchUi.SLIDE_DOWN);
+        return true;
+    }
+}
+
+// Push the status screen with its delegate wired to the view it pages.
+function pushSyncStatus(c as WorkoutController) as Void {
+    var view = new SyncStatusView(c);
+    var delegate = new SyncStatusDelegate(c);
+    delegate.setView(view);
+    WatchUi.pushView(view, delegate, WatchUi.SLIDE_UP);
 }
 
 // ------------------------------------------------------------------- set view
@@ -401,6 +524,7 @@ class SetDelegate extends WatchUi.BehaviorDelegate {
         menu.addItem(new WatchUi.MenuItem("Exercise info", null, "info", null));
         menu.addItem(new WatchUi.MenuItem("Skip to next exercise", null, "skipex", null));
         menu.addItem(new WatchUi.MenuItem("End workout", null, "finish", null));
+        menu.addItem(new WatchUi.MenuItem("Sync status", null, "status", null));
         menu.addItem(new WatchUi.MenuItem("Exit app (session kept)", null, "exit", null));
         WatchUi.pushView(menu, new SetMenuDelegate(_c), WatchUi.SLIDE_UP);
         return true;
@@ -494,6 +618,8 @@ class SetMenuDelegate extends WatchUi.Menu2InputDelegate {
             // safe and the session is restored on the next launch (onStart/restore).
             _c.save();
             System.exit();
+        } else if (id.equals("status")) {
+            pushSyncStatus(_c);
         }
     }
 }

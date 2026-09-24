@@ -162,10 +162,22 @@ mid-session no longer loses the workout.
   so a retry after a failed save/app-relaunch does not create a second record
   for the same session (see "Stash and retry" below).
 
-**No new UI.** Sync is deliberately silent (the user's decision): no
-"syncing…" line, no counters, and a failed live push never surfaces anything
-beyond a `System.println` log line — the input map and screen layout are
-unchanged.
+**A failure is no longer invisible (2026-09-24).** The old behaviour was fully
+silent — a `System.println` and nothing else — and that is how "live sync does
+not work" survived as an unexplained symptom for weeks. A failed live push now
+sets the same sync line the end-of-workout post uses (`live sync failed - <reason
+in words>`, e.g. `-300 network timeout (phone)`), only when the text changes so
+the screen is not repainted on every set, and it clears itself once a set lands
+again. The input map and layout are unchanged.
+
+**Sync status screen (2026-09-24).** Long-press SELECT on the day picker, or open
+the workout options menu, and choose **"Sync status"**: it shows the base URL in
+use and how many candidates exist, the last failure in words, the probe result,
+whether a retry is stashed, and what happened to the Garmin activity. SELECT (or
+the menu button) runs a **test endpoint** probe against
+`GET /api/v1/watch/health`. Back goes back. This is the diagnostic for the one
+thing that used to be undiagnosable from the wrist: which URL the watch is
+actually talking to, and why it is not answering.
 
 **Guards:**
 - *One live-sync request in flight at a time* (`Comms._liveInFlight` /
@@ -177,10 +189,10 @@ unchanged.
   count written per record and refuses (returns `skipped: "stale"`, writes
   nothing) any later push carrying fewer sets — protection against a
   late/out-of-order request clobbering the user's most recent sets.
-- *A failed live push is invisible and never stashed.* If the record was
-  deleted or the network failed, nothing partial is written to
-  `lift_pending_workout_v2`; the end-of-workout post still carries the
-  complete set list regardless, so no data is at risk.
+- *The stash is unchanged and still the safety net.* The payload is stashed
+  before each push and cleared only on a confirmed 2xx, so a watch crash, a dead
+  battery or the app being killed mid-request cannot lose the session; the
+  end-of-workout post still carries the complete set list regardless.
 
 **The `started_at` timestamp rule.** The live payload's 5th header field is
 the wall-clock session start (`_startedAt`), so the backend can stamp the
@@ -190,11 +202,44 @@ retry has no reliable `_startedAt` left (the session already ended), so it
 falls back to the plain 4-field `pendingText()` format; the backend then uses
 its own remembered stamp for that record, or `now()` as a last resort.
 
-**Honest caveat: writes are last-write-wins.** Liftosaur has no "in progress"
-record state, so the live record looks like a *completed* workout while it is
-still being trained. If the user edits that same record in the Liftosaur phone
-app while the watch is also pushing updates to it, whichever write lands last
-wins — there is no merge. The user has seen and accepted this.
+**Phone and watch on the same workout (re-investigated 2026-09-24).** The earlier
+conclusion in this file — "Liftosaur has no in-progress state this backend can
+reach, so the phone cannot be shown the watch's live workout" — **is out of date**.
+It was derived from the MCP-only surface and from `/api/sync2` (which needs a
+session cookie). Liftosaur's own REST API v1, authenticated by the same API key
+this backend already holds, has first-class workout endpoints, and they write the
+very field the phone app's live view reads:
+
+- `POST /api/v1/workout/start` writes `user.storage.progress[0]`
+  (`lambda/utils/apiv1Workout.ts` upstream); `GET /workout/current`,
+  `POST /workout/sets`, `POST /workout/finish`, `DELETE /workout/current` follow.
+- Every such write goes through `UserDao.applyStorageUpdate`, which ends with
+  `PushSync_notify(...)` — a **silent push to the user's other devices**, i.e. the
+  phone is told to re-pull storage.
+- Verified against the live account: a set logged through the watch's endpoint
+  appeared in `GET /api/v1/workout/current` with the watch's weight, and a discard
+  removed it again (see `tools/e2e_watch_sync.py`).
+
+So the watch *can* contribute to the same workout the phone is running, and the
+backend already does exactly that: it adopts an existing active workout instead of
+starting a second one (`409 workout_already_active` comes back for a *different*
+one) and matches exercises by name.
+
+**The honest limits, which have not changed:**
+- The phone app's live workout **UI** is still driven by its own engine, and it
+  merges storage with per-field version tracking. A push-driven update reaching
+  the phone while that app is *open and mid-workout* is not the same thing as the
+  phone owning every set; whether its screen updates live depends on the app
+  pulling the pushed storage. That cannot be verified without his phone — the test
+  procedure is: start a workout on the phone, log a set on the watch, and look at
+  the phone.
+- Silent pushes are best-effort on Android (his ColorOS build kills background
+  work aggressively), so an update may only land when the app is next opened.
+- The session's identity is its `startTime`: whoever starts it owns it, and the
+  watch's finish/discard deliberately refuse to touch a workout started by another
+  device (they report it instead — see docs/06).
+- Writes are still last-write-wins per field; there is no merge of *sets* between
+  two writers editing the same record at the same moment.
 
 ## Persistence
 
@@ -211,11 +256,14 @@ stored as nested arrays — which the API rejects.
 | `SELECT` (top-right) / tap | log the set | end the rest | confirm the reps |
 | swipe up / down | weight +/- 5 lb | rest +/- 15 s | reps +/- 1 |
 | `BACK` | step back a set (or, once finished, return to the day picker) | end the rest | confirm the reps |
-| long-press `SELECT` | menu: view workout, exercise info, skip exercise, end workout, **exit app (session kept)** | | |
+| long-press `SELECT` | menu: view workout, exercise info, skip exercise, end workout, **sync status**, **exit app (session kept)** | | |
 
-The day picker also has a long-press `SELECT` menu now, with a single **"Exit
-app"** item — `BACK` on the picker stays the "choose this day" action, so it
+The day picker also has a long-press `SELECT` menu, with **"Sync status"** and
+**"Exit app"** — `BACK` on the picker stays the "choose this day" action, so it
 needed its own way out.
+
+On the Sync-status screen: swipe (next/previous page) pages through the lines,
+`SELECT` or the menu button runs the **test endpoint** probe, `BACK` pops.
 
 ## Exercise history (swipe down from the set screen)
 
@@ -452,6 +500,17 @@ hold-`SELECT` "Exit app" menu items. Now:
   **hardware confirmation**: the fixed `Comms.urlEncode()` (2026-09-18) has
   only been proven with the Python mirror in `tools/verify_watch_payload.py`,
   not yet by an actual Save & finish on the device.
+- **Open after 2026-09-24 (endpoint work):** the watch app now normalises its
+  base URL, fails over between candidates, discovers a rotated tunnel hostname
+  and reports failures on a Sync-status screen — all of which compile and are
+  unit-tested against a Python mirror, but only the *backend* half has been
+  exercised end to end (`tools/e2e_watch_sync.py`, over the real tunnel). The
+  wrist half needs the next sideload. In particular, unverified on hardware:
+  the discovery fetch (`raw.githubusercontent.com` serves `text/plain`, and
+  `makeWebRequest` can be picky about a JSON response's content type — jsDelivr
+  is the second attempt for that reason), and whether `Application.Properties`
+  still returns an empty string rather than throwing on a device where the
+  setting was never pushed.
 - The deload section is parsed but not offered in the picker.
 - Weights come from `rm1`; if Liftosaur's `progress:` scripts have already moved
   the training max, the watch's numbers lag until the plan is regenerated.
