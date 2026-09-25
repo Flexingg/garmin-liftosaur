@@ -52,6 +52,7 @@ class WorkoutController {
     private var _restRemaining;
     private var _restTotal;
     private var _restTimer;
+    private var _currentSyncTick;
 
     private var _setsDone;
     private var _setsTotal;
@@ -132,6 +133,7 @@ class WorkoutController {
         _restRemaining = 0;
         _restTotal = 0;
         _restTimer = null;
+        _currentSyncTick = 0;
         _logged = [];
         _weights = [];
         _reps = [];
@@ -568,6 +570,13 @@ class WorkoutController {
             _hrSum += hr;
             _hrCount++;
             if (hr > _hrMax) { _hrMax = hr; }
+        }
+        if (_started and !isFinished() and _comms != null) {
+            _currentSyncTick++;
+            if (_currentSyncTick >= 5) {
+                _currentSyncTick = 0;
+                _comms.fetchCurrentWorkout();
+            }
         }
         WatchUi.requestUpdate();
     }

@@ -358,6 +358,8 @@ def watch_workout_current() -> dict:
             "week": week_num,
             "dayInWeek": day_in_week,
             "entries": entries,
+            "restTimer": cur.get("restTimer"),
+            "restTimerSince": cur.get("restTimerSince"),
         }
     }
 

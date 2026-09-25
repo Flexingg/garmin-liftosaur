@@ -61,6 +61,7 @@ class LiftComms {
     private var _posted;
     private var _liveInFlight;   // one live-sync POST in flight at a time
     private var _liveQueued;     // another set completed while one was in flight
+    private var _currentInFlight;// fetchCurrentWorkout request in flight
     private var _postInFlight;   // the finish POST is in flight
     private var _lastRecordId;   // the record id used for the last postWorkout() dispatch -
                                   // remembered because clearSaved() wipes LIVE_RECORD_KEY from
@@ -95,6 +96,7 @@ class LiftComms {
         _posted = false;
         _liveInFlight = false;
         _liveQueued = false;
+        _currentInFlight = false;
         _postInFlight = false;
         _lastRecordId = "";
 
@@ -277,7 +279,10 @@ class LiftComms {
     function onProgramsResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("programs", code, data); }
     function onPlanResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("plan", code, data); }
     function onExerciseResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("exercise", code, data); }
-    function onCurrentResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("current", code, data); }
+    function onCurrentResponse(code as Number, data as Dictionary or String or Null) as Void {
+        _currentInFlight = false;
+        handleResponse("current", code, data);
+    }
     function onLiveResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("live", code, data); }
     function onPostResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("post", code, data); }
     function onDiscardResponse(code as Number, data as Dictionary or String or Null) as Void { handleResponse("discard", code, data); }
@@ -576,6 +581,8 @@ class LiftComms {
 
     // Active workout sync: check if phone or outside client has an ongoing workout.
     function fetchCurrentWorkout() as Void {
+        if (_currentInFlight or _liveInFlight or _postInFlight) { return; }
+        _currentInFlight = true;
         request("current", null);
     }
 
