@@ -865,6 +865,36 @@ def test_live_post_triggers_rest_api_sync(monkeypatch):
     }]
 
 
+def test_live_workout_sync_never_creates_history_record_when_rest_synced(monkeypatch):
+    """When live REST sync succeeds, it must NEVER create an intermediate history record
+    or attach LIVE_NOTE, keeping the workout purely active in storage.progress."""
+    calls = []
+    mock_active = {
+        "startTime": 1700000000000,
+        "entries": [
+            {
+                "entryId": "squat_barbell",
+                "name": "Squat",
+                "sets": [{"setId": "s1", "completed": None}]
+            }
+        ]
+    }
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_active)
+    monkeypatch.setattr(plan_mod, "workout_log_sets", lambda writes, **kw: calls.append(writes))
+
+    def must_not_call_mcp(name, args, **kw):
+        raise AssertionError(f"mcp_call({name}) must not be called when live REST sync succeeds")
+
+    monkeypatch.setattr(plan_mod, "mcp_call", must_not_call_mcp)
+
+    r = client.post("/api/v1/watch/workout/live",
+                    params={"payload": _live_payload("Squat|220|5|0"), "record": ""})
+    assert r.status_code == 200
+    assert r.json()["rest_synced"] is True
+    assert r.json()["id"] == "1700000000000"
+    assert len(calls) == 1
+
+
 def test_live_post_does_not_resend_an_already_completed_set(monkeypatch):
     """Idempotence: the payload always carries the WHOLE workout-so-far, so a
     set Liftosaur already has must not be written again on every later set."""
