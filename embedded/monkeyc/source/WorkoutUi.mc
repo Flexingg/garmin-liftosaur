@@ -453,18 +453,22 @@ class SetView extends WatchUi.View {
         drawRing(dc, progress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
         // Name high, big number above the set line (no overlap), and no hint
         // text at all - the user knows the controls and the tooltips were noise.
-        drawCentered(dc, c0 - 96, marquee(_c.currentExerciseName()),
-                     Graphics.FONT_SMALL, LIFT_TEXT_DIM);
+        var exName = marquee(_c.currentExerciseName());
+        var isWm = _c.isCurrentWarmup();
+        var headerLabel = isWm ? (exName + " (WARMUP)") : exName;
+        drawCentered(dc, c0 - 96, headerLabel,
+                     Graphics.FONT_SMALL, isWm ? LIFT_PURPLE_BRIGHT : LIFT_TEXT_DIM);
         drawCentered(dc, c0 - 34, _c.currentWeight().format("%d"),
                      Graphics.FONT_NUMBER_MEDIUM, LIFT_TEXT);
         drawCentered(dc, c0 + 14,
                      "lb x " + _c.currentReps().format("%d") +
                      (_c.currentAmrap() ? "+" : ""),
                      Graphics.FONT_MEDIUM, LIFT_PURPLE_BRIGHT);
-        drawCentered(dc, c0 + 52,
-                     "set " + _c.currentSetNumber() + " of " +
-                     _c.currentExerciseSetCount(),
-                     Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+        var setLabel = isWm
+            ? ("warmup " + _c.currentSetNumber() + " of " + _c.currentExerciseSetCount())
+            : ("set " + _c.currentSetNumber() + " of " + _c.currentExerciseSetCount());
+        drawCentered(dc, c0 + 52, setLabel,
+                     Graphics.FONT_XTINY, isWm ? LIFT_PURPLE_BRIGHT : LIFT_TEXT_DIM);
         drawCentered(dc, c0 + 76, _c.hrLiveText(), Graphics.FONT_XTINY, LIFT_TEXT_DIM);
     }
 }
@@ -793,6 +797,10 @@ class ExerciseInfoView extends WatchUi.View {
         if (!_c.infoLoaded()) {
             drawCentered(dc, y + 10, "loading last time...", Graphics.FONT_XTINY,
                          LIFT_TEXT_DIM);
+        } else if (_c.infoFailed() or _c.infoSetsText().equals("") or _c.infoSetsText().equals("no previous session")) {
+            var msg = _c.infoFailed() ? "offline" : "no previous session";
+            drawCentered(dc, y + 10, msg, Graphics.FONT_XTINY,
+                         LIFT_TEXT_DIM);
         } else {
             drawCentered(dc, y, "LAST TIME  " + _c.infoDateText(),
                          Graphics.FONT_XTINY, LIFT_TEXT_DIM);
@@ -870,7 +878,8 @@ class ExerciseHistoryView extends WatchUi.View {
             drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);
             drawCentered(dc, c0 - 118, _c.currentExerciseName(), Graphics.FONT_SMALL, LIFT_TEXT);
             drawCentered(dc, c0 - 92, "HISTORY", Graphics.FONT_XTINY, LIFT_PURPLE_BRIGHT);
-            drawCentered(dc, c0 - 10, "no history yet", Graphics.FONT_XTINY, LIFT_TEXT_DIM);
+            var msg = _c.infoFailed() ? "offline" : "no history yet";
+            drawCentered(dc, c0 - 10, msg, Graphics.FONT_XTINY, LIFT_TEXT_DIM);
             return;
         }
         drawRing(dc, _c.setProgress(), LIFT_PURPLE_TRACK, LIFT_PURPLE);

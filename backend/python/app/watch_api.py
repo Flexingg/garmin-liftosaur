@@ -309,7 +309,13 @@ def watch_workout_current() -> dict:
     entries = []
     for e in cur.get("entries", []):
         sets = []
+        all_raw_sets = []
+        for ws in e.get("warmupSets", []):
+            all_raw_sets.append((ws, True))
         for s in e.get("sets", []):
+            all_raw_sets.append((s, False))
+
+        for s, is_warmup in all_raw_sets:
             completed = s.get("completed")
             w_str = (completed.get("weight") if completed else s.get("weight")) or "0lb"
             reps_val = (completed.get("reps") if completed else s.get("reps")) or 0
@@ -319,10 +325,12 @@ def watch_workout_current() -> dict:
                 "weight": int(round(plan_mod.parse_weight(w_str))),
                 "done": completed is not None,
                 "rest": s.get("timer") or 90,
+                "warmup": is_warmup,
             })
         entries.append({
             "entryId": e.get("entryId"),
             "name": e.get("name"),
+            "warmupSets": len(e.get("warmupSets", [])),
             "sets": sets,
         })
     day_data = cur.get("dayData") or {}
@@ -579,10 +587,11 @@ def _sync_live_to_liftosaur(w: WorkoutIn, stamp: int) -> tuple[bool, str]:
                                ex_name)
                 continue
 
+            all_sets = list(entry.get("warmupSets", [])) + list(entry.get("sets", []))
             for idx, ls in enumerate(lsets):
                 w_str = f"{int(round(ls.weight))}lb"
-                if idx < len(entry["sets"]):
-                    target_set = entry["sets"][idx]
+                if idx < len(all_sets):
+                    target_set = all_sets[idx]
                     comp = target_set.get("completed")
                     if comp and comp.get("reps") == ls.reps and comp.get("weight") == w_str:
                         continue  # already applied - keep the write idempotent

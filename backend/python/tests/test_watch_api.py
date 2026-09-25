@@ -789,6 +789,44 @@ def test_watch_workout_current_active(monkeypatch):
     assert sets[1]["done"] is False
 
 
+def test_watch_workout_current_with_warmups(monkeypatch):
+    mock_workout = {
+        "startTime": 1780000000000,
+        "programId": "prog1",
+        "programName": "My Program",
+        "dayName": "Day 1",
+        "entries": [
+            {
+                "entryId": "squat_barbell",
+                "name": "Squat",
+                "warmupSets": [
+                    {"setId": "w1", "reps": 5, "weight": "45lb", "completed": {"reps": 5, "weight": "45lb"}, "timer": 60},
+                    {"setId": "w2", "reps": 3, "weight": "135lb", "completed": None, "timer": 60}
+                ],
+                "sets": [
+                    {"setId": "s1", "reps": 5, "weight": "225lb", "completed": None, "timer": 180}
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(plan_mod, "workout_get_current", lambda: mock_workout)
+    r = client.get("/api/v1/watch/workout/current")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["active"] is True
+    entry = data["workout"]["entries"][0]
+    assert entry["warmupSets"] == 2
+    assert len(entry["sets"]) == 3
+    assert entry["sets"][0]["warmup"] is True
+    assert entry["sets"][0]["weight"] == 45
+    assert entry["sets"][0]["done"] is True
+    assert entry["sets"][1]["warmup"] is True
+    assert entry["sets"][1]["weight"] == 135
+    assert entry["sets"][1]["done"] is False
+    assert entry["sets"][2]["warmup"] is False
+    assert entry["sets"][2]["weight"] == 225
+
+
 def test_live_post_triggers_rest_api_sync(monkeypatch):
     """A live post pushes the new set into Liftosaur's ACTIVE workout.
 

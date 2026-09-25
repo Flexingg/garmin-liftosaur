@@ -70,6 +70,10 @@ class WorkoutController {
     private var _lapsAdded;
     private var _sessionStopped;
     private var _info;                  // last fetched exercise history
+    private var _infoLoaded;
+    private var _infoFailed;
+    private var _infoExercise;
+    private var _warmup;                // Array of Arrays of Booleans: [exercise][set] -> isWarmup
     private var _historyIndex;          // which "recent" session the history list has open
 
     // ---- exit after finish (Task 1) ----
@@ -137,6 +141,7 @@ class WorkoutController {
         _logged = [];
         _weights = [];
         _reps = [];
+        _warmup = [];
         _setsDone = 0;
         _setsTotal = 0;
         _program = "";
@@ -151,6 +156,9 @@ class WorkoutController {
         _syncNote = "";
         _lapsAdded = 0;
         _info = null;
+        _infoLoaded = false;
+        _infoFailed = false;
+        _infoExercise = "";
         _historyIndex = 0;
         _sessionStopped = false;
         _exitPending = false;
@@ -274,9 +282,8 @@ class WorkoutController {
     }
 
     function currentExerciseSetCount() as Number {
-        var exs = currentExercises();
-        if (_exIndex >= exs.size()) { return 0; }
-        return ((exs[_exIndex] as Dictionary)[:sets] as Array).size();
+        if (_exIndex < 0 or _exIndex >= _weights.size()) { return 0; }
+        return (_weights[_exIndex] as Array).size();
     }
 
     function currentSetNumber() as Number { return _setIndex + 1; }
@@ -330,6 +337,7 @@ class WorkoutController {
         _logged = [];
         _weights = [];
         _reps = [];
+        _warmup = [];
         _setsDone = 0;
         _setsTotal = 0;
         var exs = currentExercises();
@@ -338,16 +346,20 @@ class WorkoutController {
             var lrow = [];
             var wrow = [];
             var rrow = [];
+            var wmrow = [];
             for (var j = 0; j < sets.size(); j++) {
                 var s = sets[j] as Dictionary;
                 lrow.add(false);
                 wrow.add(s[:weight] as Number);
                 rrow.add(s[:reps] as Number);
+                var isWm = s[:warmup];
+                wmrow.add(isWm != null and (isWm as Boolean));
                 _setsTotal++;
             }
             _logged.add(lrow);
             _weights.add(wrow);
             _reps.add(rrow);
+            _warmup.add(wmrow);
         }
     }
 
@@ -779,23 +791,32 @@ class WorkoutController {
         WatchUi.requestUpdate();
     }
 
+    function isWarmup(exIndex as Number, setIndex as Number) as Boolean {
+        if (exIndex < 0 or exIndex >= _warmup.size()) { return false; }
+        var row = _warmup[exIndex] as Array;
+        if (setIndex < 0 or setIndex >= row.size()) { return false; }
+        return row[setIndex] as Boolean;
+    }
+
+    function isCurrentWarmup() as Boolean {
+        return isWarmup(_exIndex, _setIndex);
+    }
+
     // Every SET of the day, flattened, so the list can be per-set rather than
     // per-exercise: "Squat 220 x 5" is what you actually need to find.
     function setCount() as Number {
         var n = 0;
-        var exs = currentExercises();
-        for (var i = 0; i < exs.size(); i++) {
-            n += ((exs[i] as Dictionary)[:sets] as Array).size();
+        for (var i = 0; i < _weights.size(); i++) {
+            n += (_weights[i] as Array).size();
         }
         return n;
     }
 
     // Flat index over every set: [exercise index, set index]
     private function setRefAt(flat as Number) as Array {
-        var exs = currentExercises();
         var k = 0;
-        for (var i = 0; i < exs.size(); i++) {
-            var sn = ((exs[i] as Dictionary)[:sets] as Array).size();
+        for (var i = 0; i < _weights.size(); i++) {
+            var sn = (_weights[i] as Array).size();
             if (flat < k + sn) { return [i, flat - k]; }
             k += sn;
         }
@@ -810,8 +831,14 @@ class WorkoutController {
         if (ei >= exs.size()) { return "-"; }
         var name = (exs[ei] as Dictionary)[:name] as String;
         var reps = _reps[ei][si] as Number;
-        var amrap = (((exs[ei] as Dictionary)[:sets] as Array)[si] as Dictionary)[:amrap] as Boolean;
-        return name + "  " + (_weights[ei][si] as Number) + " x " + reps +
+        var amrap = false;
+        var exSets = (exs[ei] as Dictionary)[:sets] as Array;
+        if (si < exSets.size()) {
+            var am = (exSets[si] as Dictionary)[:amrap];
+            amrap = (am != null and (am as Boolean));
+        }
+        var wmTag = isWarmup(ei, si) ? " [W] " : "  ";
+        return name + wmTag + (_weights[ei][si] as Number) + " x " + reps +
                (amrap ? "+" : "");
     }
 
@@ -819,11 +846,12 @@ class WorkoutController {
         var ref = setRefAt(flat);
         var ei = ref[0] as Number;
         var si = ref[1] as Number;
-        var exs = currentExercises();
-        var sn = ((exs[ei] as Dictionary)[:sets] as Array).size();
+        if (ei >= _weights.size()) { return "-"; }
+        var sn = (_weights[ei] as Array).size();
         var mark = isLogged(ei, si) ? "done" : "todo";
         if (ei == _exIndex and si == _setIndex) { mark += "  now"; }
-        return "set " + (si + 1) + " of " + sn + "   " + mark;
+        var prefix = isWarmup(ei, si) ? "warmup " : "set ";
+        return prefix + (si + 1) + " of " + sn + "   " + mark;
     }
 
     function jumpToSet(flat as Number) as Void {
@@ -838,10 +866,23 @@ class WorkoutController {
     // ---- exercise info (previous session, from the backend) ----
     function setExerciseInfo(dict as Dictionary or Null) as Void {
         _info = dict;
+        _infoLoaded = true;
+        _infoFailed = (dict == null);
         _historyIndex = 0;   // fresh data: drop any stale selection into the old list
+        WatchUi.requestUpdate();
     }
 
-    function infoLoaded() as Boolean { return _info != null; }
+    function resetExerciseInfo(name as String) as Void {
+        if (!_infoExercise.equals(name)) {
+            _info = null;
+            _infoLoaded = false;
+            _infoFailed = false;
+            _infoExercise = name;
+        }
+    }
+
+    function infoLoaded() as Boolean { return _infoLoaded; }
+    function infoFailed() as Boolean { return _infoFailed; }
 
     // "5x120  3x140  1x155" — grouped, because that is how it scrolls by
     function infoSetsText() as String {
@@ -1099,12 +1140,21 @@ class WorkoutController {
     // Ask the backend for this exercise's previous session (info screen).
     function requestExerciseInfo() as Void {
         if (isFinished()) {
-            // Nothing to look up; the views show the session summary instead.
             _info = null;
+            _infoLoaded = true;
+            _infoFailed = false;
             WatchUi.requestUpdate();
             return;
         }
-        if (_comms != null) { _comms.fetchExerciseInfo(currentExerciseName()); }
+        var exName = currentExerciseName();
+        resetExerciseInfo(exName);
+        if (_comms != null) {
+            _comms.fetchExerciseInfo(exName);
+        } else {
+            _infoLoaded = true;
+            _infoFailed = true;
+            WatchUi.requestUpdate();
+        }
     }
 
     // The compact payload to POST at finish: a stashed retry (_pendingBody set,
@@ -1279,6 +1329,7 @@ class WorkoutController {
         Application.Storage.setValue("lift_weights", joinNumbers(_weights));
         Application.Storage.setValue("lift_reps", joinNumbers(_reps));
         Application.Storage.setValue("lift_logged", joinBooleans(_logged));
+        Application.Storage.setValue("lift_warmup", joinBooleans(_warmup));
     }
 
     // Restore an interrupted session, if the plan still matches.
@@ -1303,6 +1354,8 @@ class WorkoutController {
         if (r != null) { splitNumbers(r as String, _reps); }
         var l = Application.Storage.getValue("lift_logged");
         if (l != null) { splitBooleans(l as String, _logged); }
+        var wm = Application.Storage.getValue("lift_warmup");
+        if (wm != null) { splitBooleans(wm as String, _warmup); }
         // Derive the counter from the restored grid instead of trusting the
         // stored "lift_done": a restored session used to keep the PREVIOUS
         // session's count, so the summary and the SetsDone field read "16 sets"
@@ -1315,13 +1368,16 @@ class WorkoutController {
     // truth, so no path can drift again.
     private function recountLogged() as Void {
         var n = 0;
+        var total = 0;
         for (var i = 0; i < _logged.size(); i++) {
             var row = _logged[i] as Array;
             for (var j = 0; j < row.size(); j++) {
                 if (row[j] as Boolean) { n++; }
+                total++;
             }
         }
         _setsDone = n;
+        if (total > 0) { _setsTotal = total; }
     }
 
     function clearSaved() as Void {
@@ -1335,6 +1391,7 @@ class WorkoutController {
         Application.Storage.deleteValue("lift_weights");
         Application.Storage.deleteValue("lift_reps");
         Application.Storage.deleteValue("lift_logged");
+        Application.Storage.deleteValue("lift_warmup");
         // Live-sync bookkeeping: a stale id here would make some later,
         // unrelated workout silently UPDATE this one's Liftosaur record.
         Application.Storage.deleteValue("lift_live_record");
@@ -1478,26 +1535,51 @@ class WorkoutController {
 
             var liveSets = eDict["sets"];
             if (!(liveSets instanceof Array)) { continue; }
-            for (var si = 0; si < (liveSets as Array).size(); si++) {
-                if (si >= (_weights[matchedIdx] as Array).size()) { continue; }
-                var sDict = (liveSets as Array)[si];
-                if (!(sDict instanceof Dictionary)) { continue; }
-                var sd = sDict as Dictionary;
-                var w = sd["weight"];
-                var r = sd["reps"];
-                var done = sd["done"];
-
-                if (w instanceof Number) {
-                    // Update weight if not logged on watch yet
-                    if (!isLogged(matchedIdx, si)) {
-                        _weights[matchedIdx][si] = w as Number;
+            var lsArr = liveSets as Array;
+            if (lsArr.size() > 0) {
+                if (lsArr.size() != (_weights[matchedIdx] as Array).size()) {
+                    var newL = [];
+                    var newW = [];
+                    var newR = [];
+                    var newWm = [];
+                    for (var si = 0; si < lsArr.size(); si++) {
+                        var sd = lsArr[si] as Dictionary;
+                        var w = sd["weight"];
+                        var r = sd["reps"];
+                        var done = sd["done"];
+                        var wm = sd["warmup"];
+                        newL.add(done instanceof Boolean and (done as Boolean));
+                        newW.add((w instanceof Number) ? (w as Number) : 0);
+                        newR.add((r instanceof Number) ? (r as Number) : 0);
+                        newWm.add(wm instanceof Boolean and (wm as Boolean));
                     }
-                }
-                if (done instanceof Boolean and (done as Boolean)) {
-                    if (!isLogged(matchedIdx, si)) {
-                        _logged[matchedIdx][si] = true;
-                        if (w instanceof Number) { _weights[matchedIdx][si] = w as Number; }
-                        if (r instanceof Number) { _reps[matchedIdx][si] = r as Number; }
+                    _logged[matchedIdx] = newL;
+                    _weights[matchedIdx] = newW;
+                    _reps[matchedIdx] = newR;
+                    _warmup[matchedIdx] = newWm;
+                } else {
+                    for (var si = 0; si < lsArr.size(); si++) {
+                        var sd = lsArr[si] as Dictionary;
+                        var w = sd["weight"];
+                        var r = sd["reps"];
+                        var done = sd["done"];
+                        var wm = sd["warmup"];
+
+                        if (w instanceof Number) {
+                            if (!isLogged(matchedIdx, si)) {
+                                _weights[matchedIdx][si] = w as Number;
+                            }
+                        }
+                        if (done instanceof Boolean and (done as Boolean)) {
+                            if (!isLogged(matchedIdx, si)) {
+                                _logged[matchedIdx][si] = true;
+                                if (w instanceof Number) { _weights[matchedIdx][si] = w as Number; }
+                                if (r instanceof Number) { _reps[matchedIdx][si] = r as Number; }
+                            }
+                        }
+                        if (wm instanceof Boolean) {
+                            _warmup[matchedIdx][si] = wm as Boolean;
+                        }
                     }
                 }
             }
@@ -1570,14 +1652,19 @@ class WorkoutController {
             // when the workout began. A restored session or a swapped plan can
             // leave them shorter, and indexing blindly crashed the save.
             if (i >= _weights.size() or i >= _reps.size()) { continue; }
-            if (planSets.size() > (_weights[i] as Array).size()) { continue; }
-            for (var j = 0; j < planSets.size(); j++) {
+            var sn = (_weights[i] as Array).size();
+            for (var j = 0; j < sn; j++) {
                 if (!isLogged(i, j)) { continue; }
+                var amrap = false;
+                if (j < planSets.size()) {
+                    var am = (planSets[j] as Dictionary)[:amrap];
+                    amrap = (am != null and (am as Boolean));
+                }
                 sets.add({
                     :exercise => name,
                     :weight => _weights[i][j] as Number,
                     :reps => _reps[i][j] as Number,
-                    :amrap => (planSets[j] as Dictionary)[:amrap] as Boolean
+                    :amrap => amrap
                 });
             }
         }
