@@ -34,6 +34,8 @@ kinematic physics and machine-learning rep detection.
   Liftosaur program is compiled into weights and baked into the build
 - **`docs/06-sync.md`** — ⭐ fetch + write-back: the https tunnel, the plan
   endpoint, and why Liftosaur rejects a bad program name with a 200
+- **`healthconnect/`** — research + scripts to port Wear OS / Health Connect workouts into
+  Garmin Connect as activities from your own Venu 2S (see `healthconnect/README.md`).
 - **`docs/04-ble-transport.md`** — ⭐ the real-time BLE link: why the phone is the
   peripheral and the watch is the central, the UUIDs, the binary wire format,
   fragmentation, and what is/isn't verified.

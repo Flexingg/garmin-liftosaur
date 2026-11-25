@@ -1,0 +1,10 @@
+# Personal health data never goes in this (public) repo:
+templates/
+out/
+*.fit
+*.FIT
+*.zip
+*.db
+hc_out/
+# credentials / token caches
+.garminconnect/

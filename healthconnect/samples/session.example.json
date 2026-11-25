@@ -1,0 +1,16 @@
+{
+  "sport": "strength",
+  "title": "example - synthetic data, not a real workout",
+  "start": "2026-11-20T23:00:00Z",
+  "end": "2026-11-20T23:20:00Z",
+  "utc_offset_s": -21600,
+  "total_calories_kcal": 95,
+  "heart_rate": [["2026-11-20T23:00:00Z", 70], ["2026-11-20T23:02:00Z", 118], ["2026-11-20T23:04:00Z", 92],
+                 ["2026-11-20T23:08:00Z", 121], ["2026-11-20T23:12:00Z", 95], ["2026-11-20T23:16:00Z", 125],
+                 ["2026-11-20T23:20:00Z", 88]],
+  "sets": [
+    {"start": "2026-11-20T23:01:00Z", "end": "2026-11-20T23:01:40Z", "exercise": "bench_press", "reps": 8, "weight_kg": 61.2},
+    {"start": "2026-11-20T23:07:00Z", "end": "2026-11-20T23:07:45Z", "exercise": 11, "reps": 5, "weight_kg": 102.1},
+    {"start": "2026-11-20T23:15:00Z", "end": "2026-11-20T23:15:30Z", "exercise": "Chin Up", "reps": 10}
+  ]
+}
